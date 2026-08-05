@@ -42,4 +42,5 @@ class SWHCheckResult:
     known: bool | None  # None means "could not be determined"
     method: SWHLookupMethod
     detail: str
+    swhid: str | None = None
     swh_url: str | None = None

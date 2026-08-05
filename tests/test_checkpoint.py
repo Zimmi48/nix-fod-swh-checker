@@ -23,7 +23,8 @@ def make_result(**overrides):
         known=True,
         method=SWHLookupMethod.CONTENT_HASH,
         detail="content lookup by sha256:aaaa",
-        swh_url="https://archive.softwareheritage.org/api/1/content/sha256:aaaa/",
+        swhid="swh:1:cnt:" + "a" * 40,
+        swh_url="https://archive.softwareheritage.org/swh:1:cnt:" + "a" * 40,
     )
     defaults.update(overrides)
     return SWHCheckResult(**defaults)
@@ -42,6 +43,7 @@ def test_save_and_load_roundtrip(tmp_path):
     assert loaded_result.known is True
     assert loaded_result.method == SWHLookupMethod.CONTENT_HASH
     assert loaded_result.detail == result.detail
+    assert loaded_result.swhid == result.swhid
     assert loaded_result.swh_url == result.swh_url
 
 

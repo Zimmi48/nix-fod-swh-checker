@@ -49,6 +49,7 @@ def load_checkpoint(path: Path) -> dict[str, SWHCheckResult]:
                 known=entry["known"],
                 method=SWHLookupMethod(entry["method"]),
                 detail=entry["detail"],
+                swhid=entry.get("swhid"),
                 swh_url=entry.get("swh_url"),
             )
         except (KeyError, TypeError, ValueError):
@@ -67,6 +68,7 @@ def save_checkpoint(path: Path, installable: str, results: dict[str, SWHCheckRes
                 "known": result.known,
                 "method": result.method.value,
                 "detail": result.detail,
+                "swhid": result.swhid,
                 "swh_url": result.swh_url,
             }
             for label, result in results.items()

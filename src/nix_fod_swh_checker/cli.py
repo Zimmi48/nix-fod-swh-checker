@@ -101,6 +101,7 @@ def _result_to_dict(result: SWHCheckResult) -> dict:
         "known": result.known,
         "method": result.method.value,
         "detail": result.detail,
+        "swhid": result.swhid,
         "swh_url": result.swh_url,
     }
 

@@ -65,12 +65,20 @@ def check_fod(
 
 def _check_via_content_hash(fod: FixedOutputDerivation, client: SWHClient) -> SWHCheckResult:
     result = client.lookup_content(fod.hash_algo, fod.hash_hex)
+    swhid: str | None = None
+    swh_url: str | None = None
+    if result.known and result.raw:
+        sha1_git = result.raw.get("checksums", {}).get("sha1_git")
+        if sha1_git:
+            swhid = f"swh:1:cnt:{sha1_git}"
+            swh_url = f"{_ARCHIVE_URL}/{swhid}"
     return SWHCheckResult(
         fod=fod,
         known=result.known,
         method=SWHLookupMethod.CONTENT_HASH,
         detail=f"content lookup by {fod.hash_algo}:{fod.hash_hex}",
-        swh_url=f"{_ARCHIVE_URL}/api/1/content/{fod.hash_algo}:{fod.hash_hex}/",
+        swhid=swhid,
+        swh_url=swh_url,
     )
 
 
@@ -81,12 +89,14 @@ def _check_via_swhid(fod: FixedOutputDerivation, client: SWHClient) -> SWHCheckR
     known_map = client.lookup_known_swhids(candidates)
     known_swhids = [swhid for swhid, known in known_map.items() if known]
     if known_swhids:
+        swhid = known_swhids[0]
         return SWHCheckResult(
             fod=fod,
             known=True,
             method=SWHLookupMethod.SWHID_KNOWN,
             detail=f"known as {', '.join(known_swhids)}",
-            swh_url=f"{_ARCHIVE_URL}/{known_swhids[0]}",
+            swhid=swhid,
+            swh_url=f"{_ARCHIVE_URL}/{swhid}",
         )
     return SWHCheckResult(
         fod=fod,
@@ -130,5 +140,6 @@ def _check_via_build_and_identify(
         known=known,
         method=SWHLookupMethod.BUILD_AND_IDENTIFY,
         detail=f"built {out_path} and computed {swhid}",
+        swhid=swhid if known else None,
         swh_url=f"{_ARCHIVE_URL}/{swhid}" if known else None,
     )
