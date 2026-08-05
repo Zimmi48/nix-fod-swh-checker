@@ -45,10 +45,17 @@ nix run .#nix-fod-swh-check -- nixpkgs#hello
 1 FOD(s) checked: 1 known, 0 unknown, 0 undetermined
 ```
 
+Checking FODs can be slow -- realising a `nar`-hashed FOD may need to download it, and the Software Heritage API is rate-limited -- so progress messages (what's being listed/built/queried, and rate-limit waits) are printed to stderr as the tool runs. Pass `--quiet`/`-q` to suppress them.
+
+Results are also checkpointed to disk as each FOD is checked (by default under `$XDG_CACHE_HOME/nix-fod-swh-checker/`, in a file named after a hash of the installable). If the tool is interrupted or crashes, simply re-run the same command: already-checked FODs are loaded from the checkpoint and skipped instead of being re-checked. Use `--checkpoint-file` to pick an explicit location, or `--no-checkpoint` to disable this entirely.
+
 Useful options:
 
 - `--json` — print machine-readable JSON instead of the human-readable report.
 - `--only-unknown` — only report FODs that are not known to Software Heritage (or undetermined).
+- `--quiet` / `-q` — suppress the stderr progress messages.
+- `--checkpoint-file` — path to the checkpoint file (default: a per-installable file under `$XDG_CACHE_HOME/nix-fod-swh-checker/`).
+- `--no-checkpoint` — do not read or write a checkpoint file.
 - `--swh-api-token` / `SWH_API_TOKEN` — authenticate to the Software Heritage API to raise rate limits.
 - `--min-delay` — minimum delay (seconds) between Software Heritage API requests (default `1.0`), to stay within the anonymous rate limit.
 - `--nix-binary` — path to a specific `nix` executable.

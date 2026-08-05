@@ -22,6 +22,8 @@ some of them map directly onto an identifier Software Heritage understands:
 """
 from __future__ import annotations
 
+from typing import Callable
+
 from .models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
 from .nix import NixCommandError, realise_fod
 from .swh import CONTENT_LOOKUP_ALGOS, SWHClient
@@ -36,17 +38,29 @@ def check_fod(
     *,
     nix_binary: str = "nix",
     swh_binary: str = "swh",
+    on_log: Callable[[str], None] | None = None,
 ) -> SWHCheckResult:
     """Check a single FOD against Software Heritage, choosing the most
     appropriate comparison strategy for its content-addressing method.
     """
     if fod.method == "git" and fod.hash_algo == "sha1" and fod.hash_hex:
+        if on_log:
+            on_log(f"{fod.label}: method=git, checking its SWHID directly")
         return _check_via_swhid(fod, client)
 
     if fod.method == "flat" and fod.hash_algo in CONTENT_LOOKUP_ALGOS and fod.hash_hex:
+        if on_log:
+            on_log(f"{fod.label}: method=flat, checking its content hash directly")
         return _check_via_content_hash(fod, client)
 
-    return _check_via_build_and_identify(fod, client, nix_binary=nix_binary, swh_binary=swh_binary)
+    if on_log:
+        on_log(
+            f"{fod.label}: method={fod.method!r} has no direct Software Heritage "
+            "equivalent, realising it to compute its actual SWHID"
+        )
+    return _check_via_build_and_identify(
+        fod, client, nix_binary=nix_binary, swh_binary=swh_binary, on_log=on_log
+    )
 
 
 def _check_via_content_hash(fod: FixedOutputDerivation, client: SWHClient) -> SWHCheckResult:
@@ -88,9 +102,10 @@ def _check_via_build_and_identify(
     *,
     nix_binary: str,
     swh_binary: str,
+    on_log: Callable[[str], None] | None = None,
 ) -> SWHCheckResult:
     try:
-        out_path = realise_fod(fod, nix_binary=nix_binary)
+        out_path = realise_fod(fod, nix_binary=nix_binary, on_log=on_log)
     except NixCommandError as exc:
         return SWHCheckResult(
             fod=fod,
@@ -100,7 +115,7 @@ def _check_via_build_and_identify(
         )
 
     try:
-        swhid = compute_swhid(out_path, swh_binary=swh_binary)
+        swhid = compute_swhid(out_path, swh_binary=swh_binary, on_log=on_log)
     except SWHIdentifyError as exc:
         return SWHCheckResult(
             fod=fod,

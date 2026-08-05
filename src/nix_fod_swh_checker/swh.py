@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Callable, Iterable
 
 import requests
 
@@ -43,11 +43,13 @@ class SWHClient:
         timeout: float = 20.0,
         max_retries: int = 3,
         min_delay: float = 1.0,
+        on_log: Callable[[str], None] | None = None,
     ) -> None:
         self.api_url = api_url.rstrip("/")
         self.timeout = timeout
         self.max_retries = max_retries
         self.min_delay = min_delay
+        self.on_log = on_log
         self._last_request_time = 0.0
 
         self.session = requests.Session()
@@ -58,7 +60,10 @@ class SWHClient:
     def _throttle(self) -> None:
         elapsed = time.monotonic() - self._last_request_time
         if elapsed < self.min_delay:
-            time.sleep(self.min_delay - elapsed)
+            wait = self.min_delay - elapsed
+            if self.on_log and wait > 0.05:
+                self.on_log(f"waiting {wait:.1f}s before the next Software Heritage API request...")
+            time.sleep(wait)
 
     def _request(self, method: str, path: str, **kwargs) -> requests.Response:
         url = f"{self.api_url}{path}"
@@ -69,11 +74,18 @@ class SWHClient:
                 response = self.session.request(method, url, timeout=self.timeout, **kwargs)
             except requests.RequestException as exc:
                 last_exc = exc
+                if self.on_log:
+                    self.on_log(f"request to {url} failed ({exc}), retrying...")
                 time.sleep(self.min_delay * (attempt + 1))
                 continue
             self._last_request_time = time.monotonic()
             if response.status_code == 429:
                 retry_after = float(response.headers.get("Retry-After", self.min_delay * 2))
+                if self.on_log:
+                    self.on_log(
+                        f"rate-limited by the Software Heritage API, "
+                        f"retrying in {retry_after:.1f}s..."
+                    )
                 time.sleep(retry_after)
                 continue
             return response

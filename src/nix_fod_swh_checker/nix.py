@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from typing import Iterable, Iterator
+from typing import Callable, Iterable, Iterator
 
 from .models import FixedOutputDerivation
 
@@ -21,12 +21,18 @@ def show_derivations_recursive(
     *,
     nix_binary: str = "nix",
     extra_args: Iterable[str] | None = None,
+    on_log: Callable[[str], None] | None = None,
 ) -> dict[str, dict]:
     """Run `nix derivation show --recursive <installable>` and parse its JSON output.
 
     Returns a mapping of `.drv` store paths to derivation objects.
     """
     cmd = [nix_binary, "derivation", "show", "--recursive", *(extra_args or []), installable]
+    if on_log:
+        on_log(
+            f"running 'nix derivation show --recursive {installable}' "
+            "(this can take a while for large dependency graphs)..."
+        )
     proc = _run_nix(cmd, nix_binary)
     try:
         return json.loads(proc.stdout)
@@ -39,6 +45,7 @@ def realise_fod(
     *,
     nix_binary: str = "nix",
     extra_args: Iterable[str] | None = None,
+    on_log: Callable[[str], None] | None = None,
 ) -> str:
     """Realise a single FOD output and return its resulting store path.
 
@@ -49,6 +56,11 @@ def realise_fod(
     """
     installable = f"{fod.drv_path}^{fod.output_name}"
     cmd = [nix_binary, "build", "--no-link", "--print-out-paths", *(extra_args or []), installable]
+    if on_log:
+        on_log(
+            f"realising {fod.label} (fetching from a binary cache or building it, "
+            "this can be slow)..."
+        )
     out_paths = _run_nix(cmd, nix_binary).stdout.split()
     if not out_paths:
         raise NixCommandError(f"'{' '.join(cmd)}' produced no output path")
@@ -77,9 +89,14 @@ def iter_fixed_output_derivations(
     objects, each with an `outputs` mapping of output names to
     `{"path", "method", "hashAlgo", "hash"}` objects. An output is a FOD
     exactly when its `hash` field is set.
+
+    Many Nix versions don't actually populate the `method` field in
+    `outputs` and only expose it as the legacy `outputHashMode` environment
+    variable (`"flat"` or `"recursive"`), so that's used as a fallback.
     """
     for drv_path, drv in derivations.items():
         outputs = drv.get("outputs", {}) or {}
+        env = drv.get("env", {}) or {}
         for output_name, output in outputs.items():
             hash_hex = output.get("hash")
             if not hash_hex:
@@ -89,7 +106,17 @@ def iter_fixed_output_derivations(
                 output_name=output_name,
                 output_path=output.get("path"),
                 name=drv.get("name", drv_path),
-                method=output.get("method"),
+                method=_output_method(output, env),
                 hash_algo=output.get("hashAlgo"),
                 hash_hex=hash_hex,
             )
+
+
+def _output_method(output: dict, env: dict) -> str | None:
+    method = output.get("method")
+    if method:
+        return method
+    output_hash_mode = env.get("outputHashMode")
+    if output_hash_mode == "recursive":
+        return "nar"
+    return output_hash_mode or None

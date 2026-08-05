@@ -6,8 +6,10 @@ import json
 import os
 import sys
 from dataclasses import asdict
+from pathlib import Path
 
 from .checker import check_fod
+from .checkpoint import default_checkpoint_path, load_checkpoint, save_checkpoint
 from .models import SWHCheckResult
 from .nix import NixCommandError, iter_fixed_output_derivations, show_derivations_recursive
 from .swh import DEFAULT_API_URL, SWHClient, SWHError
@@ -68,6 +70,26 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="only report FODs that are not known to Software Heritage (or undetermined)",
     )
+    parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="do not print progress messages to stderr while checking FODs",
+    )
+    parser.add_argument(
+        "--checkpoint-file",
+        default=None,
+        help=(
+            "path to a JSON file used to save results as FODs are checked, so an "
+            "interrupted run can resume without re-checking them (default: a "
+            "per-installable file under $XDG_CACHE_HOME/nix-fod-swh-checker/)"
+        ),
+    )
+    parser.add_argument(
+        "--no-checkpoint",
+        action="store_true",
+        help="do not read or write a checkpoint file",
+    )
     return parser
 
 
@@ -107,9 +129,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     api_token = args.swh_api_token or os.environ.get("SWH_API_TOKEN")
+    on_log = None if args.quiet else lambda msg: print(msg, file=sys.stderr, flush=True)
 
     try:
-        derivations = show_derivations_recursive(args.installable, nix_binary=args.nix_binary)
+        derivations = show_derivations_recursive(
+            args.installable, nix_binary=args.nix_binary, on_log=on_log
+        )
     except NixCommandError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -119,19 +144,57 @@ def main(argv: list[str] | None = None) -> int:
         print("no fixed-output derivations found", file=sys.stderr)
         return 0
 
-    results: list[SWHCheckResult] = []
+    if on_log:
+        on_log(f"found {len(fods)} fixed-output derivation(s) to check against Software Heritage")
+
+    checkpoint_path = None
+    checked: dict[str, SWHCheckResult] = {}
+    if not args.no_checkpoint:
+        checkpoint_path = (
+            Path(args.checkpoint_file) if args.checkpoint_file else default_checkpoint_path(args.installable)
+        )
+        checked = load_checkpoint(checkpoint_path)
+        if on_log:
+            if checked:
+                on_log(
+                    f"resuming from checkpoint {checkpoint_path} "
+                    f"({len(checked)} FOD(s) already checked)"
+                )
+            else:
+                on_log(f"saving progress to checkpoint {checkpoint_path}")
+
     with SWHClient(
-        api_url=args.swh_api_url, api_token=api_token, min_delay=args.min_delay
+        api_url=args.swh_api_url, api_token=api_token, min_delay=args.min_delay, on_log=on_log
     ) as client:
-        for fod in fods:
-            try:
-                results.append(
-                    check_fod(
-                        fod, client, nix_binary=args.nix_binary, swh_binary=args.swh_binary
+        total = len(fods)
+        for index, fod in enumerate(fods, start=1):
+            if fod.label in checked:
+                if on_log:
+                    on_log(
+                        f"[{index}/{total}] {fod.label}: already checked "
+                        f"({_STATUS_LABELS[checked[fod.label].known]}), skipping"
                     )
+                continue
+            if on_log:
+                on_log(f"[{index}/{total}] checking {fod.label}")
+            try:
+                result = check_fod(
+                    fod,
+                    client,
+                    nix_binary=args.nix_binary,
+                    swh_binary=args.swh_binary,
+                    on_log=on_log,
                 )
             except SWHError as exc:
                 print(f"warning: {exc}", file=sys.stderr)
+                continue
+            if on_log:
+                on_log(f"[{index}/{total}] {fod.label}: {_STATUS_LABELS[result.known]}")
+            checked[fod.label] = result
+            if checkpoint_path is not None:
+                save_checkpoint(checkpoint_path, args.installable, checked)
+
+    results = [checked[fod.label] for fod in fods if fod.label in checked]
 
     if args.only_unknown:
         results = [r for r in results if r.known is not True]

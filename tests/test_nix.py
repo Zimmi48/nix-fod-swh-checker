@@ -90,6 +90,38 @@ def test_iter_fixed_output_derivations_labels_non_out_output():
     assert fod.label == "/nix/store/x.drv^dev"
 
 
+def test_iter_fixed_output_derivations_falls_back_to_output_hash_mode():
+    # Many real-world `nix derivation show` outputs don't populate the
+    # `method` field at all, only the legacy `outputHashMode` env var.
+    derivations = {
+        "/nix/store/flat.drv": {
+            "name": "flat",
+            "env": {"outputHashMode": "flat"},
+            "outputs": {
+                "out": {
+                    "path": "/nix/store/flat-out",
+                    "hashAlgo": "sha256",
+                    "hash": "aa" * 32,
+                }
+            },
+        },
+        "/nix/store/recursive.drv": {
+            "name": "recursive",
+            "env": {"outputHashMode": "recursive"},
+            "outputs": {
+                "out": {
+                    "path": "/nix/store/recursive-out",
+                    "hashAlgo": "sha256",
+                    "hash": "bb" * 32,
+                }
+            },
+        },
+    }
+    flat_fod, recursive_fod = list(iter_fixed_output_derivations(derivations))
+    assert flat_fod.method == "flat"
+    assert recursive_fod.method == "nar"
+
+
 def test_show_derivations_recursive_parses_json(monkeypatch):
     def fake_run(cmd, check, capture_output, text):
         assert cmd[:4] == ["nix", "derivation", "show", "--recursive"]

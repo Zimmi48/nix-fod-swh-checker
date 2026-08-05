@@ -73,11 +73,13 @@ def test_check_fod_nar_method_builds_and_identifies(monkeypatch):
     fod = make_fod(method="nar", hash_algo="sha256", hash_hex="e" * 64)
     swhid = "swh:1:dir:" + "f" * 40
 
-    monkeypatch.setattr(checker_module, "realise_fod", lambda fod, *, nix_binary: "/nix/store/z")
+    monkeypatch.setattr(
+        checker_module, "realise_fod", lambda fod, *, nix_binary, on_log=None: "/nix/store/z"
+    )
     monkeypatch.setattr(
         checker_module,
         "compute_swhid",
-        lambda path, *, swh_binary: swhid if path == "/nix/store/z" else None,
+        lambda path, *, swh_binary, on_log=None: swhid if path == "/nix/store/z" else None,
     )
 
     client = FakeSWHClient(known_swhids={swhid: True})
@@ -92,8 +94,12 @@ def test_check_fod_nar_method_unknown_swhid(monkeypatch):
     fod = make_fod(method="nar", hash_algo="sha256", hash_hex="1" * 64)
     swhid = "swh:1:dir:" + "2" * 40
 
-    monkeypatch.setattr(checker_module, "realise_fod", lambda fod, *, nix_binary: "/nix/store/z")
-    monkeypatch.setattr(checker_module, "compute_swhid", lambda path, *, swh_binary: swhid)
+    monkeypatch.setattr(
+        checker_module, "realise_fod", lambda fod, *, nix_binary, on_log=None: "/nix/store/z"
+    )
+    monkeypatch.setattr(
+        checker_module, "compute_swhid", lambda path, *, swh_binary, on_log=None: swhid
+    )
 
     client = FakeSWHClient()
     result = check_fod(fod, client)
@@ -104,7 +110,7 @@ def test_check_fod_nar_method_unknown_swhid(monkeypatch):
 def test_check_fod_nar_method_build_failure_is_undetermined(monkeypatch):
     fod = make_fod(method="nar", hash_algo="sha256", hash_hex="3" * 64)
 
-    def fail_realise(fod, *, nix_binary):
+    def fail_realise(fod, *, nix_binary, on_log=None):
         raise NixCommandError("boom")
 
     monkeypatch.setattr(checker_module, "realise_fod", fail_realise)
@@ -119,9 +125,11 @@ def test_check_fod_nar_method_build_failure_is_undetermined(monkeypatch):
 def test_check_fod_nar_method_identify_failure_is_undetermined(monkeypatch):
     fod = make_fod(method="nar", hash_algo="sha256", hash_hex="4" * 64)
 
-    monkeypatch.setattr(checker_module, "realise_fod", lambda fod, *, nix_binary: "/nix/store/z")
+    monkeypatch.setattr(
+        checker_module, "realise_fod", lambda fod, *, nix_binary, on_log=None: "/nix/store/z"
+    )
 
-    def fail_identify(path, *, swh_binary):
+    def fail_identify(path, *, swh_binary, on_log=None):
         raise SWHIdentifyError("boom")
 
     monkeypatch.setattr(checker_module, "compute_swhid", fail_identify)

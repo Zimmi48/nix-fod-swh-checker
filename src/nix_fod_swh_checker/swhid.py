@@ -9,13 +9,19 @@ Heritage itself would compute for the same content.
 from __future__ import annotations
 
 import subprocess
+from typing import Callable
 
 
 class SWHIdentifyError(RuntimeError):
     """Raised when the `swh identify` command fails or returns unparseable output."""
 
 
-def compute_swhid(path: str, *, swh_binary: str = "swh") -> str:
+def compute_swhid(
+    path: str,
+    *,
+    swh_binary: str = "swh",
+    on_log: Callable[[str], None] | None = None,
+) -> str:
     """Compute the intrinsic SWHID of a local file or directory.
 
     Runs `swh identify --no-filename <path>`, which prints a single
@@ -23,6 +29,8 @@ def compute_swhid(path: str, *, swh_binary: str = "swh") -> str:
     content and, for directories, the content of its entries.
     """
     cmd = [swh_binary, "identify", "--no-filename", path]
+    if on_log:
+        on_log(f"computing the SWHID of {path} via 'swh identify' (may be slow for large trees)...")
     try:
         proc = subprocess.run(cmd, check=True, capture_output=True, text=True)
     except FileNotFoundError as exc:
