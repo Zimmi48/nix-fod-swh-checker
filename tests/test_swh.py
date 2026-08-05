@@ -63,14 +63,6 @@ def test_lookup_known_swhids_empty_list_short_circuits(monkeypatch):
     assert client.lookup_known_swhids([]) == {}
 
 
-def test_lookup_origin(monkeypatch):
-    client = SWHClient(min_delay=0)
-    monkeypatch.setattr(
-        client.session, "request", lambda method, url, timeout, **kw: FakeResponse(200, {})
-    )
-    assert client.lookup_origin("https://example.com/x.tar.gz") is True
-
-
 def test_request_retries_on_429_then_succeeds(monkeypatch):
     client = SWHClient(min_delay=0, max_retries=2)
     responses = [FakeResponse(429, headers={"Retry-After": "0"}), FakeResponse(200, {})]
@@ -78,7 +70,8 @@ def test_request_retries_on_429_then_succeeds(monkeypatch):
         client.session, "request", lambda method, url, timeout, **kw: responses.pop(0)
     )
     monkeypatch.setattr("nix_fod_swh_checker.swh.time.sleep", lambda *_: None)
-    assert client.lookup_origin("https://example.com/x.tar.gz") is True
+    result = client.lookup_content("sha256", "abc")
+    assert result.known is True
 
 
 def test_request_raises_swherror_after_exhausting_retries(monkeypatch):
@@ -90,4 +83,4 @@ def test_request_raises_swherror_after_exhausting_retries(monkeypatch):
     monkeypatch.setattr(client.session, "request", always_fail)
     monkeypatch.setattr("nix_fod_swh_checker.swh.time.sleep", lambda *_: None)
     with pytest.raises(SWHError):
-        client.lookup_origin("https://example.com/x.tar.gz")
+        client.lookup_content("sha256", "abc")

@@ -1,15 +1,16 @@
+from nix_fod_swh_checker import checker as checker_module
 from nix_fod_swh_checker.checker import check_fod
 from nix_fod_swh_checker.models import FixedOutputDerivation, SWHLookupMethod
+from nix_fod_swh_checker.nix import NixCommandError
 from nix_fod_swh_checker.swh import ContentLookupResult
+from nix_fod_swh_checker.swhid import SWHIdentifyError
 
 
 class FakeSWHClient:
-    def __init__(self, content_known=False, known_swhids=None, known_origins=None):
+    def __init__(self, content_known=False, known_swhids=None):
         self.content_known = content_known
         self.known_swhids = known_swhids or {}
-        self.known_origins = known_origins or set()
         self.content_calls = []
-        self.origin_calls = []
 
     def lookup_content(self, algo, hash_hex):
         self.content_calls.append((algo, hash_hex))
@@ -17,10 +18,6 @@ class FakeSWHClient:
 
     def lookup_known_swhids(self, swhids):
         return {swhid: self.known_swhids.get(swhid, False) for swhid in swhids}
-
-    def lookup_origin(self, url):
-        self.origin_calls.append(url)
-        return url in self.known_origins
 
 
 def make_fod(**overrides):
@@ -32,7 +29,6 @@ def make_fod(**overrides):
         method="flat",
         hash_algo="sha256",
         hash_hex="a" * 64,
-        urls=[],
     )
     defaults.update(overrides)
     return FixedOutputDerivation(**defaults)
@@ -73,23 +69,65 @@ def test_check_fod_git_method_unknown():
     assert result.method == SWHLookupMethod.SWHID_KNOWN
 
 
-def test_check_fod_nar_method_falls_back_to_origin():
-    fod = make_fod(
-        method="nar",
-        hash_algo="sha256",
-        hash_hex="e" * 64,
-        urls=["https://example.com/src.tar.gz"],
+def test_check_fod_nar_method_builds_and_identifies(monkeypatch):
+    fod = make_fod(method="nar", hash_algo="sha256", hash_hex="e" * 64)
+    swhid = "swh:1:dir:" + "f" * 40
+
+    monkeypatch.setattr(checker_module, "realise_fod", lambda fod, *, nix_binary: "/nix/store/z")
+    monkeypatch.setattr(
+        checker_module,
+        "compute_swhid",
+        lambda path, *, swh_binary: swhid if path == "/nix/store/z" else None,
     )
-    client = FakeSWHClient(known_origins={"https://example.com/src.tar.gz"})
+
+    client = FakeSWHClient(known_swhids={swhid: True})
     result = check_fod(fod, client)
     assert result.known is True
-    assert result.method == SWHLookupMethod.ORIGIN_URL
-    assert client.origin_calls == ["https://example.com/src.tar.gz"]
+    assert result.method == SWHLookupMethod.BUILD_AND_IDENTIFY
+    assert "/nix/store/z" in result.detail
+    assert swhid in result.detail
 
 
-def test_check_fod_nar_method_no_urls_is_undetermined():
-    fod = make_fod(method="nar", hash_algo="sha256", hash_hex="f" * 64, urls=[])
+def test_check_fod_nar_method_unknown_swhid(monkeypatch):
+    fod = make_fod(method="nar", hash_algo="sha256", hash_hex="1" * 64)
+    swhid = "swh:1:dir:" + "2" * 40
+
+    monkeypatch.setattr(checker_module, "realise_fod", lambda fod, *, nix_binary: "/nix/store/z")
+    monkeypatch.setattr(checker_module, "compute_swhid", lambda path, *, swh_binary: swhid)
+
+    client = FakeSWHClient()
+    result = check_fod(fod, client)
+    assert result.known is False
+    assert result.method == SWHLookupMethod.BUILD_AND_IDENTIFY
+
+
+def test_check_fod_nar_method_build_failure_is_undetermined(monkeypatch):
+    fod = make_fod(method="nar", hash_algo="sha256", hash_hex="3" * 64)
+
+    def fail_realise(fod, *, nix_binary):
+        raise NixCommandError("boom")
+
+    monkeypatch.setattr(checker_module, "realise_fod", fail_realise)
+
     client = FakeSWHClient()
     result = check_fod(fod, client)
     assert result.known is None
     assert result.method == SWHLookupMethod.UNSUPPORTED
+    assert "boom" in result.detail
+
+
+def test_check_fod_nar_method_identify_failure_is_undetermined(monkeypatch):
+    fod = make_fod(method="nar", hash_algo="sha256", hash_hex="4" * 64)
+
+    monkeypatch.setattr(checker_module, "realise_fod", lambda fod, *, nix_binary: "/nix/store/z")
+
+    def fail_identify(path, *, swh_binary):
+        raise SWHIdentifyError("boom")
+
+    monkeypatch.setattr(checker_module, "compute_swhid", fail_identify)
+
+    client = FakeSWHClient()
+    result = check_fod(fod, client)
+    assert result.known is None
+    assert result.method == SWHLookupMethod.UNSUPPORTED
+    assert "boom" in result.detail

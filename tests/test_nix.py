@@ -7,6 +7,7 @@ from nix_fod_swh_checker.models import FixedOutputDerivation
 from nix_fod_swh_checker.nix import (
     NixCommandError,
     iter_fixed_output_derivations,
+    realise_fod,
     show_derivations_recursive,
 )
 
@@ -64,11 +65,10 @@ def test_iter_fixed_output_derivations_filters_non_fods():
 
     flat_fod = next(f for f in fods if f.method == "flat")
     assert flat_fod.hash_algo == "sha256"
-    assert flat_fod.urls == ["https://ftp.gnu.org/gnu/hello/hello-2.10.tar.gz"]
     assert flat_fod.label == "/nix/store/ccc-hello-2.10.tar.gz.drv"
 
     nar_fod = next(f for f in fods if f.method == "nar")
-    assert nar_fod.urls == ["https://example.com/source.tar.gz"]
+    assert nar_fod.hash_algo == "sha256"
 
 
 def test_iter_fixed_output_derivations_labels_non_out_output():
@@ -125,3 +125,51 @@ def test_show_derivations_recursive_bad_json(monkeypatch):
     monkeypatch.setattr(subprocess, "run", fake_run)
     with pytest.raises(NixCommandError, match="could not parse JSON"):
         show_derivations_recursive("nixpkgs#hello")
+
+
+def _make_fod(**overrides):
+    defaults = dict(
+        drv_path="/nix/store/x.drv",
+        output_name="out",
+        output_path="/nix/store/y",
+        name="x",
+        method="nar",
+        hash_algo="sha256",
+        hash_hex="a" * 64,
+    )
+    defaults.update(overrides)
+    return FixedOutputDerivation(**defaults)
+
+
+def test_realise_fod_returns_out_path(monkeypatch):
+    fod = _make_fod(drv_path="/nix/store/x.drv", output_name="out")
+
+    def fake_run(cmd, check, capture_output, text):
+        assert cmd[:4] == ["nix", "build", "--no-link", "--print-out-paths"]
+        assert cmd[-1] == "/nix/store/x.drv^out"
+        return subprocess.CompletedProcess(cmd, 0, stdout="/nix/store/y-out\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert realise_fod(fod) == "/nix/store/y-out"
+
+
+def test_realise_fod_command_error(monkeypatch):
+    fod = _make_fod()
+
+    def fake_run(cmd, check, capture_output, text):
+        raise subprocess.CalledProcessError(1, cmd, stderr="error: build failed")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(NixCommandError, match="build failed"):
+        realise_fod(fod)
+
+
+def test_realise_fod_no_output_paths(monkeypatch):
+    fod = _make_fod()
+
+    def fake_run(cmd, check, capture_output, text):
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(NixCommandError, match="produced no output path"):
+        realise_fod(fod)

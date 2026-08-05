@@ -10,21 +10,33 @@ some of them map directly onto an identifier Software Heritage understands:
 - `method="flat"`: the hash is a plain checksum (sha1/sha256/...) of the raw
   file bytes, which is exactly what the SWH `/content/{algo}:{hash}/`
   endpoint indexes.
-- `method="nar"` (the common case, e.g. `fetchurl`/`fetchzip` outputs that
-  are directories): the hash is computed over the NAR serialization of the
-  output, which has no equivalent in Software Heritage's data model. There is
-  no direct way to check such a hash; the best we can do is look up the
-  FOD's source URL(s) as a Software Heritage "origin".
+- Anything else (most commonly `method="nar"`, used by `fetchurl`/`fetchzip`
+  outputs that are directories): the hash has no equivalent in Software
+  Heritage's data model, so there is no way to compare it directly. Instead,
+  the FOD is actually realised with `nix build` -- which fetches it from a
+  binary cache such as cache.nixos.org whenever possible, rather than
+  rebuilding it from scratch -- and its real SWHID is computed from the
+  resulting files on disk with the reference `swh identify` tool. That exact
+  SWHID is then looked up via the `/known/` endpoint. No guessing is
+  involved: the SWHID is derived from the actual archived content.
 """
 from __future__ import annotations
 
 from .models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
+from .nix import NixCommandError, realise_fod
 from .swh import CONTENT_LOOKUP_ALGOS, SWHClient
+from .swhid import SWHIdentifyError, compute_swhid
 
 _ARCHIVE_URL = "https://archive.softwareheritage.org"
 
 
-def check_fod(fod: FixedOutputDerivation, client: SWHClient) -> SWHCheckResult:
+def check_fod(
+    fod: FixedOutputDerivation,
+    client: SWHClient,
+    *,
+    nix_binary: str = "nix",
+    swh_binary: str = "swh",
+) -> SWHCheckResult:
     """Check a single FOD against Software Heritage, choosing the most
     appropriate comparison strategy for its content-addressing method.
     """
@@ -34,18 +46,7 @@ def check_fod(fod: FixedOutputDerivation, client: SWHClient) -> SWHCheckResult:
     if fod.method == "flat" and fod.hash_algo in CONTENT_LOOKUP_ALGOS and fod.hash_hex:
         return _check_via_content_hash(fod, client)
 
-    if fod.urls:
-        return _check_via_origin(fod, client)
-
-    return SWHCheckResult(
-        fod=fod,
-        known=None,
-        method=SWHLookupMethod.UNSUPPORTED,
-        detail=(
-            f"no direct hash comparison is possible for method={fod.method!r} "
-            f"algo={fod.hash_algo!r}, and no source URL is available"
-        ),
-    )
+    return _check_via_build_and_identify(fod, client, nix_binary=nix_binary, swh_binary=swh_binary)
 
 
 def _check_via_content_hash(fod: FixedOutputDerivation, client: SWHClient) -> SWHCheckResult:
@@ -81,19 +82,38 @@ def _check_via_swhid(fod: FixedOutputDerivation, client: SWHClient) -> SWHCheckR
     )
 
 
-def _check_via_origin(fod: FixedOutputDerivation, client: SWHClient) -> SWHCheckResult:
-    for url in fod.urls:
-        if client.lookup_origin(url):
-            return SWHCheckResult(
-                fod=fod,
-                known=True,
-                method=SWHLookupMethod.ORIGIN_URL,
-                detail=f"origin {url} has been archived",
-                swh_url=f"{_ARCHIVE_URL}/browse/origin/?origin_url={url}",
-            )
-    detail = (
-        "none of the source URLs are known as archived origins "
-        f"({', '.join(fod.urls)}); the FOD's own hash "
-        f"(method={fod.method!r}) cannot be compared directly"
+def _check_via_build_and_identify(
+    fod: FixedOutputDerivation,
+    client: SWHClient,
+    *,
+    nix_binary: str,
+    swh_binary: str,
+) -> SWHCheckResult:
+    try:
+        out_path = realise_fod(fod, nix_binary=nix_binary)
+    except NixCommandError as exc:
+        return SWHCheckResult(
+            fod=fod,
+            known=None,
+            method=SWHLookupMethod.UNSUPPORTED,
+            detail=f"could not realise FOD to compute its SWHID: {exc}",
+        )
+
+    try:
+        swhid = compute_swhid(out_path, swh_binary=swh_binary)
+    except SWHIdentifyError as exc:
+        return SWHCheckResult(
+            fod=fod,
+            known=None,
+            method=SWHLookupMethod.UNSUPPORTED,
+            detail=f"built {out_path} but could not compute its SWHID: {exc}",
+        )
+
+    known = client.lookup_known_swhids([swhid]).get(swhid, False)
+    return SWHCheckResult(
+        fod=fod,
+        known=known,
+        method=SWHLookupMethod.BUILD_AND_IDENTIFY,
+        detail=f"built {out_path} and computed {swhid}",
+        swh_url=f"{_ARCHIVE_URL}/{swhid}" if known else None,
     )
-    return SWHCheckResult(fod=fod, known=False, method=SWHLookupMethod.ORIGIN_URL, detail=detail)

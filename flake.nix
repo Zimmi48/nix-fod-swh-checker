@@ -11,17 +11,28 @@
       let
         pkgs = import nixpkgs { inherit system; };
 
+        # `swh identify` (from the swh-model project) computes the actual,
+        # git-compatible SWHID of a file or directory on disk. It's used at
+        # runtime to check FODs whose Nix hash has no direct equivalent in
+        # Software Heritage's data model (see checker.py for details).
+        swhIdentify = pkgs.python3.withPackages (ps: [
+          ps.swh-core
+          ps.swh-model
+        ]);
+
         nix-fod-swh-checker = pkgs.python3Packages.buildPythonApplication {
           pname = "nix-fod-swh-checker";
           version = "0.1.0";
           format = "pyproject";
           src = ./.;
 
-          nativeBuildInputs = [ pkgs.python3Packages.hatchling ];
+          nativeBuildInputs = [ pkgs.python3Packages.hatchling pkgs.makeWrapper ];
           propagatedBuildInputs = [ pkgs.python3Packages.requests ];
 
           nativeCheckInputs = [ pkgs.python3Packages.pytestCheckHook ];
           pythonImportsCheck = [ "nix_fod_swh_checker" ];
+
+          makeWrapperArgs = [ "--prefix" "PATH" ":" "${swhIdentify}/bin" ];
 
           meta = {
             description = "List the FODs reachable from a Nix attribute and check whether their sources are archived on Software Heritage";
@@ -44,6 +55,7 @@
         devShells.default = pkgs.mkShell {
           nativeBuildInputs = [
             pkgs.nixpkgs-fmt
+            swhIdentify
 
             (pkgs.python3.withPackages (ps: [
               ps.requests

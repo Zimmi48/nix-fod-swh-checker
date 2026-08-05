@@ -109,18 +109,6 @@ class SWHClient:
         data = response.json()
         return {swhid: bool(info.get("known")) for swhid, info in data.items()}
 
-    def lookup_origin(self, url: str) -> bool:
-        """Check whether an origin (e.g. a source tarball URL) has ever been visited.
-
-        Corresponds to `GET /origin/{url}/get/`.
-        """
-        response = self._request("GET", f"/origin/{url}/get/")
-        if response.status_code == 404:
-            return False
-        if response.status_code == 200:
-            return True
-        raise SWHError(f"unexpected status {response.status_code} looking up origin {url}")
-
     def close(self) -> None:
         self.session.close()
 

@@ -34,6 +34,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="path to the nix executable to use (default: %(default)s)",
     )
     parser.add_argument(
+        "--swh-binary",
+        default="swh",
+        help=(
+            "path to the Software Heritage 'swh' CLI (providing 'swh identify'), "
+            "used to compute SWHIDs for FODs whose hash cannot be checked directly "
+            "(default: %(default)s)"
+        ),
+    )
+    parser.add_argument(
         "--swh-api-url",
         default=DEFAULT_API_URL,
         help="base URL of the Software Heritage API (default: %(default)s)",
@@ -116,7 +125,11 @@ def main(argv: list[str] | None = None) -> int:
     ) as client:
         for fod in fods:
             try:
-                results.append(check_fod(fod, client))
+                results.append(
+                    check_fod(
+                        fod, client, nix_binary=args.nix_binary, swh_binary=args.swh_binary
+                    )
+                )
             except SWHError as exc:
                 print(f"warning: {exc}", file=sys.stderr)
 

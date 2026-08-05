@@ -27,8 +27,37 @@ def show_derivations_recursive(
     Returns a mapping of `.drv` store paths to derivation objects.
     """
     cmd = [nix_binary, "derivation", "show", "--recursive", *(extra_args or []), installable]
+    proc = _run_nix(cmd, nix_binary)
     try:
-        proc = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise NixCommandError(f"could not parse JSON output of '{' '.join(cmd)}'") from exc
+
+
+def realise_fod(
+    fod: FixedOutputDerivation,
+    *,
+    nix_binary: str = "nix",
+    extra_args: Iterable[str] | None = None,
+) -> str:
+    """Realise a single FOD output and return its resulting store path.
+
+    This runs `nix build --no-link --print-out-paths <drv>^<output>`, which
+    fetches the output from any configured substituter (e.g. the NixOS
+    binary cache) whenever possible, only falling back to actually
+    downloading/building it from scratch if it isn't substitutable.
+    """
+    installable = f"{fod.drv_path}^{fod.output_name}"
+    cmd = [nix_binary, "build", "--no-link", "--print-out-paths", *(extra_args or []), installable]
+    out_paths = _run_nix(cmd, nix_binary).stdout.split()
+    if not out_paths:
+        raise NixCommandError(f"'{' '.join(cmd)}' produced no output path")
+    return out_paths[0]
+
+
+def _run_nix(cmd: list[str], nix_binary: str) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(cmd, check=True, capture_output=True, text=True)
     except FileNotFoundError as exc:
         raise NixCommandError(f"could not find the '{nix_binary}' executable") from exc
     except subprocess.CalledProcessError as exc:
@@ -36,25 +65,6 @@ def show_derivations_recursive(
         raise NixCommandError(
             f"'{' '.join(cmd)}' failed with exit code {exc.returncode}: {stderr}"
         ) from exc
-
-    try:
-        return json.loads(proc.stdout)
-    except json.JSONDecodeError as exc:
-        raise NixCommandError(f"could not parse JSON output of '{' '.join(cmd)}'") from exc
-
-
-def _extract_urls(env: dict) -> list[str]:
-    """Best-effort extraction of source URL(s) from a derivation's environment.
-
-    Most fetchers (`fetchurl`, `fetchzip`, `fetchpatch`, ...) expose the
-    download URL(s) as a whitespace-separated `urls` (or singular `url`)
-    environment variable.
-    """
-    for key in ("urls", "url"):
-        value = env.get(key)
-        if value:
-            return value.split()
-    return []
 
 
 def iter_fixed_output_derivations(
@@ -70,7 +80,6 @@ def iter_fixed_output_derivations(
     """
     for drv_path, drv in derivations.items():
         outputs = drv.get("outputs", {}) or {}
-        env = drv.get("env", {}) or {}
         for output_name, output in outputs.items():
             hash_hex = output.get("hash")
             if not hash_hex:
@@ -83,5 +92,4 @@ def iter_fixed_output_derivations(
                 method=output.get("method"),
                 hash_algo=output.get("hashAlgo"),
                 hash_hex=hash_hex,
-                urls=_extract_urls(env),
             )
