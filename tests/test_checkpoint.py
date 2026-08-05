@@ -80,5 +80,5 @@ def test_default_checkpoint_path_is_stable_and_namespaced(monkeypatch, tmp_path)
     path3 = default_checkpoint_path("nixpkgs#other")
 
     assert path1 == path2
-    assert path1 != path3
+    assert path1 == path3
     assert path1.parent == Path(tmp_path) / "nix-fod-swh-checker"

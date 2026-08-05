@@ -20,13 +20,13 @@ from .models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
 
 
 def default_checkpoint_path(installable: str) -> Path:
-    """Compute a stable, per-installable checkpoint file path under the
-    user's cache directory ($XDG_CACHE_HOME, or ~/.cache as a fallback).
+    """Compute a stable shared checkpoint file path under the user's cache
+    directory ($XDG_CACHE_HOME, or ~/.cache as a fallback).
     """
     cache_home = os.environ.get("XDG_CACHE_HOME") or os.path.join(
         os.path.expanduser("~"), ".cache"
     )
-    digest = hashlib.sha256(installable.encode()).hexdigest()[:16]
+    digest = hashlib.sha256("shared-cache".encode()).hexdigest()[:16]
     return Path(cache_home) / "nix-fod-swh-checker" / f"{digest}.json"
 
 
