@@ -58,7 +58,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--min-delay",
         type=float,
         default=1.0,
-        help="minimum delay in seconds between Software Heritage API requests (default: %(default)s)",
+        help="minimum delay in seconds between Software Heritage API requests when unauthenticated (default: %(default)s)",
     )
     parser.add_argument(
         "--json",

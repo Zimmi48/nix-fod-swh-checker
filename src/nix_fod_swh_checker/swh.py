@@ -56,6 +56,9 @@ class SWHClient:
         self.session.headers["Accept"] = "application/json"
         if api_token:
             self.session.headers["Authorization"] = f"Bearer {api_token}"
+            self.logged_in = True
+        else:
+            self.logged_in = False
 
     def _throttle(self) -> None:
         elapsed = time.monotonic() - self._last_request_time
@@ -69,7 +72,8 @@ class SWHClient:
         url = f"{self.api_url}{path}"
         last_exc: Exception | None = None
         for attempt in range(self.max_retries + 1):
-            self._throttle()
+            if not self.logged_in:
+                self._throttle()
             try:
                 response = self.session.request(method, url, timeout=self.timeout, **kwargs)
             except requests.RequestException as exc:
