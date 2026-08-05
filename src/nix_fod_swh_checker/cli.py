@@ -131,80 +131,107 @@ def main(argv: list[str] | None = None) -> int:
     api_token = args.swh_api_token or os.environ.get("SWH_API_TOKEN")
     on_log = None if args.quiet else lambda msg: print(msg, file=sys.stderr, flush=True)
 
-    try:
-        derivations = show_derivations_recursive(
-            args.installable, nix_binary=args.nix_binary, on_log=on_log
-        )
-    except NixCommandError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-
-    fods = list(iter_fixed_output_derivations(derivations))
-    if not fods:
-        print("no fixed-output derivations found", file=sys.stderr)
-        return 0
-
-    if on_log:
-        on_log(f"found {len(fods)} fixed-output derivation(s) to check against Software Heritage")
-
-    checkpoint_path = None
+    checkpoint_path: Path | None = None
     checked: dict[str, SWHCheckResult] = {}
-    if not args.no_checkpoint:
-        checkpoint_path = (
-            Path(args.checkpoint_file) if args.checkpoint_file else default_checkpoint_path(args.installable)
-        )
-        checked = load_checkpoint(checkpoint_path)
+
+    try:
+        try:
+            derivations = show_derivations_recursive(
+                args.installable, nix_binary=args.nix_binary, on_log=on_log
+            )
+        except NixCommandError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+        fods = list(iter_fixed_output_derivations(derivations))
+        if not fods:
+            print("no fixed-output derivations found", file=sys.stderr)
+            return 0
+
         if on_log:
-            if checked:
-                on_log(
-                    f"resuming from checkpoint {checkpoint_path} "
-                    f"({len(checked)} FOD(s) already checked)"
-                )
-            else:
-                on_log(f"saving progress to checkpoint {checkpoint_path}")
+            on_log(
+                f"found {len(fods)} fixed-output derivation(s) to check against Software Heritage"
+            )
 
-    with SWHClient(
-        api_url=args.swh_api_url, api_token=api_token, min_delay=args.min_delay, on_log=on_log
-    ) as client:
-        total = len(fods)
-        for index, fod in enumerate(fods, start=1):
-            if fod.label in checked:
-                if on_log:
+        if not args.no_checkpoint:
+            checkpoint_path = (
+                Path(args.checkpoint_file)
+                if args.checkpoint_file
+                else default_checkpoint_path(args.installable)
+            )
+            checked = load_checkpoint(checkpoint_path)
+            if on_log:
+                if checked:
                     on_log(
-                        f"[{index}/{total}] {fod.label}: already checked "
-                        f"({_STATUS_LABELS[checked[fod.label].known]}), skipping"
+                        f"resuming from checkpoint {checkpoint_path} "
+                        f"({len(checked)} FOD(s) already checked)"
                     )
-                continue
-            if on_log:
-                on_log(f"[{index}/{total}] checking {fod.label}")
-            try:
-                result = check_fod(
-                    fod,
-                    client,
-                    nix_binary=args.nix_binary,
-                    swh_binary=args.swh_binary,
-                    on_log=on_log,
-                )
-            except SWHError as exc:
-                print(f"warning: {exc}", file=sys.stderr)
-                continue
-            if on_log:
-                on_log(f"[{index}/{total}] {fod.label}: {_STATUS_LABELS[result.known]}")
-            checked[fod.label] = result
-            if checkpoint_path is not None:
-                save_checkpoint(checkpoint_path, args.installable, checked)
+                else:
+                    on_log(f"saving progress to checkpoint {checkpoint_path}")
 
-    results = [checked[fod.label] for fod in fods if fod.label in checked]
+        with SWHClient(
+            api_url=args.swh_api_url,
+            api_token=api_token,
+            min_delay=args.min_delay,
+            on_log=on_log,
+        ) as client:
+            total = len(fods)
+            for index, fod in enumerate(fods, start=1):
+                if fod.label in checked:
+                    if on_log:
+                        on_log(
+                            f"[{index}/{total}] {fod.label}: already checked "
+                            f"({_STATUS_LABELS[checked[fod.label].known]}), skipping"
+                        )
+                    continue
+                if on_log:
+                    on_log(f"[{index}/{total}] checking {fod.label}")
+                try:
+                    result = check_fod(
+                        fod,
+                        client,
+                        nix_binary=args.nix_binary,
+                        swh_binary=args.swh_binary,
+                        on_log=on_log,
+                    )
+                except SWHError as exc:
+                    print(f"warning: {exc}", file=sys.stderr)
+                    continue
+                if on_log:
+                    on_log(f"[{index}/{total}] {fod.label}: {_STATUS_LABELS[result.known]}")
+                checked[fod.label] = result
+                if checkpoint_path is not None:
+                    save_checkpoint(checkpoint_path, args.installable, checked)
 
-    if args.only_unknown:
-        results = [r for r in results if r.known is not True]
+        results = [checked[fod.label] for fod in fods if fod.label in checked]
 
-    if args.json:
-        print(json.dumps([_result_to_dict(r) for r in results], indent=2))
-    else:
-        _print_report(results)
+        if args.only_unknown:
+            results = [r for r in results if r.known is not True]
 
-    return 0
+        if args.json:
+            print(json.dumps([_result_to_dict(r) for r in results], indent=2))
+        else:
+            _print_report(results)
+
+        return 0
+    except KeyboardInterrupt:
+        return _handle_interrupt(checked, checkpoint_path)
+
+
+def _handle_interrupt(
+    checked: dict[str, SWHCheckResult], checkpoint_path: Path | None
+) -> int:
+    """Print a clean, traceback-free message when interrupted (e.g. Ctrl+C),
+    and return the conventional 128+SIGINT exit code.
+    """
+    print(file=sys.stderr)  # move past any '^C' echoed by the terminal
+    message = "interrupted"
+    if checked:
+        message += f"; {len(checked)} FOD(s) were checked before being interrupted"
+    if checkpoint_path is not None:
+        message += f"; progress was saved to {checkpoint_path}, re-run the same command to resume"
+    print(f"{message}.", file=sys.stderr)
+    return 130
 
 
 if __name__ == "__main__":

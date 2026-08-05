@@ -49,6 +49,8 @@ Checking FODs can be slow -- realising a `nar`-hashed FOD may need to download i
 
 Results are also checkpointed to disk as each FOD is checked (by default under `$XDG_CACHE_HOME/nix-fod-swh-checker/`, in a file named after a hash of the installable). If the tool is interrupted or crashes, simply re-run the same command: already-checked FODs are loaded from the checkpoint and skipped instead of being re-checked. Use `--checkpoint-file` to pick an explicit location, or `--no-checkpoint` to disable this entirely.
 
+Pressing Ctrl+C exits cleanly (no Python traceback), reporting how many FODs were checked before the interruption and where the checkpoint was saved, with the conventional `130` exit code.
+
 Useful options:
 
 - `--json` — print machine-readable JSON instead of the human-readable report.
