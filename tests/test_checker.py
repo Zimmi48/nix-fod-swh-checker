@@ -7,14 +7,15 @@ from nix_fod_swh_checker.swhid import SWHIdentifyError
 
 
 class FakeSWHClient:
-    def __init__(self, content_known=False, known_swhids=None):
+    def __init__(self, content_known=False, content_raw=None, known_swhids=None):
         self.content_known = content_known
+        self.content_raw = content_raw
         self.known_swhids = known_swhids or {}
         self.content_calls = []
 
     def lookup_content(self, algo, hash_hex):
         self.content_calls.append((algo, hash_hex))
-        return ContentLookupResult(known=self.content_known)
+        return ContentLookupResult(known=self.content_known, raw=self.content_raw)
 
     def lookup_known_swhids(self, swhids):
         return {swhid: self.known_swhids.get(swhid, False) for swhid in swhids}
@@ -36,11 +37,14 @@ def make_fod(**overrides):
 
 def test_check_fod_flat_known():
     fod = make_fod(method="flat", hash_algo="sha256", hash_hex="a" * 64)
-    client = FakeSWHClient(content_known=True)
+    sha1_git = "b" * 40
+    client = FakeSWHClient(content_known=True, content_raw={"checksums": {"sha1_git": sha1_git}})
     result = check_fod(fod, client)
     assert result.known is True
     assert result.method == SWHLookupMethod.CONTENT_HASH
     assert client.content_calls == [("sha256", "a" * 64)]
+    assert result.swhid == f"swh:1:cnt:{sha1_git}"
+    assert result.swh_url == f"https://archive.softwareheritage.org/swh:1:cnt:{sha1_git}"
 
 
 def test_check_fod_flat_unknown():
@@ -59,6 +63,8 @@ def test_check_fod_git_method_known_as_content():
     assert result.known is True
     assert result.method == SWHLookupMethod.SWHID_KNOWN
     assert swhid in result.detail
+    assert result.swhid == swhid
+    assert result.swh_url == f"https://archive.softwareheritage.org/{swhid}"
 
 
 def test_check_fod_git_method_unknown():
@@ -88,6 +94,8 @@ def test_check_fod_nar_method_builds_and_identifies(monkeypatch):
     assert result.method == SWHLookupMethod.BUILD_AND_IDENTIFY
     assert "/nix/store/z" in result.detail
     assert swhid in result.detail
+    assert result.swhid == swhid
+    assert result.swh_url == f"https://archive.softwareheritage.org/{swhid}"
 
 
 def test_check_fod_nar_method_unknown_swhid(monkeypatch):
@@ -105,6 +113,8 @@ def test_check_fod_nar_method_unknown_swhid(monkeypatch):
     result = check_fod(fod, client)
     assert result.known is False
     assert result.method == SWHLookupMethod.BUILD_AND_IDENTIFY
+    assert result.swhid == swhid
+    assert result.swh_url is None
 
 
 def test_check_fod_nar_method_build_failure_is_undetermined(monkeypatch):
