@@ -140,6 +140,6 @@ def _check_via_build_and_identify(
         known=known,
         method=SWHLookupMethod.BUILD_AND_IDENTIFY,
         detail=f"built {out_path} and computed {swhid}",
-        swhid=swhid if known else None,
+        swhid=swhid,
         swh_url=f"{_ARCHIVE_URL}/{swhid}" if known else None,
     )

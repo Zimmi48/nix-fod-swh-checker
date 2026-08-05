@@ -113,6 +113,8 @@ def test_check_fod_nar_method_unknown_swhid(monkeypatch):
     result = check_fod(fod, client)
     assert result.known is False
     assert result.method == SWHLookupMethod.BUILD_AND_IDENTIFY
+    assert result.swhid == swhid
+    assert result.swh_url is None
 
 
 def test_check_fod_nar_method_build_failure_is_undetermined(monkeypatch):
