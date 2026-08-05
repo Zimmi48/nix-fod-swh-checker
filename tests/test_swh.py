@@ -74,6 +74,55 @@ def test_request_retries_on_429_then_succeeds(monkeypatch):
     assert result.known is True
 
 
+def test_request_retries_using_x_ratelimit_reset(monkeypatch):
+    # The real Software Heritage API does not send `Retry-After` on 429s,
+    # only `X-RateLimit-Reset` (a Unix timestamp), confirmed by inspecting a
+    # live response.
+    monkeypatch.setattr("nix_fod_swh_checker.swh.time.time", lambda: 1000.0)
+    client = SWHClient(min_delay=0, max_retries=2)
+    responses = [
+        FakeResponse(429, headers={"X-RateLimit-Reset": "1010"}),
+        FakeResponse(200, {}),
+    ]
+    monkeypatch.setattr(
+        client.session, "request", lambda method, url, timeout, **kw: responses.pop(0)
+    )
+    sleeps = []
+    monkeypatch.setattr("nix_fod_swh_checker.swh.time.sleep", lambda s: sleeps.append(s))
+    result = client.lookup_content("sha256", "abc")
+    assert result.known is True
+    assert sleeps == [10.0]
+
+
+def test_warn_if_quota_low_logs_when_remaining_is_low(monkeypatch):
+    monkeypatch.setattr("nix_fod_swh_checker.swh.time.time", lambda: 1000.0)
+    messages = []
+    client = SWHClient(min_delay=0, on_log=messages.append)
+    monkeypatch.setattr(
+        client.session,
+        "request",
+        lambda method, url, timeout, **kw: FakeResponse(
+            200, {}, headers={"X-RateLimit-Remaining": "2", "X-RateLimit-Reset": "1030"}
+        ),
+    )
+    client.lookup_content("sha256", "abc")
+    assert any("quota running low" in m for m in messages)
+
+
+def test_warn_if_quota_low_silent_when_remaining_is_high(monkeypatch):
+    messages = []
+    client = SWHClient(min_delay=0, on_log=messages.append)
+    monkeypatch.setattr(
+        client.session,
+        "request",
+        lambda method, url, timeout, **kw: FakeResponse(
+            200, {}, headers={"X-RateLimit-Remaining": "100"}
+        ),
+    )
+    client.lookup_content("sha256", "abc")
+    assert not any("quota running low" in m for m in messages)
+
+
 def test_request_raises_swherror_after_exhausting_retries(monkeypatch):
     client = SWHClient(min_delay=0, max_retries=1)
 

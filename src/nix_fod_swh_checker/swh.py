@@ -80,7 +80,7 @@ class SWHClient:
                 continue
             self._last_request_time = time.monotonic()
             if response.status_code == 429:
-                retry_after = float(response.headers.get("Retry-After", self.min_delay * 2))
+                retry_after = self._retry_after_seconds(response)
                 if self.on_log:
                     self.on_log(
                         f"rate-limited by the Software Heritage API, "
@@ -88,8 +88,52 @@ class SWHClient:
                     )
                 time.sleep(retry_after)
                 continue
+            self._warn_if_quota_low(response)
             return response
         raise SWHError(f"request to {url} failed after {self.max_retries + 1} attempts") from last_exc
+
+    def _retry_after_seconds(self, response: requests.Response) -> float:
+        """Determine how long to wait before retrying a 429 response.
+
+        The Software Heritage API does not send a standard `Retry-After`
+        header; instead every response carries `X-RateLimit-Limit`,
+        `X-RateLimit-Remaining`, and `X-RateLimit-Reset` (a Unix timestamp for
+        when the current throttling window resets), confirmed by inspecting
+        a live response. `Retry-After` is honoured too in case that ever
+        changes, with a fixed fallback if neither header is present.
+        """
+        reset = response.headers.get("X-RateLimit-Reset")
+        if reset:
+            try:
+                return max(0.0, float(reset) - time.time())
+            except ValueError:
+                pass
+        retry_after = response.headers.get("Retry-After")
+        if retry_after:
+            try:
+                return float(retry_after)
+            except ValueError:
+                pass
+        return self.min_delay * 2
+
+    def _warn_if_quota_low(self, response: requests.Response, threshold: int = 3) -> None:
+        if not self.on_log:
+            return
+        remaining = response.headers.get("X-RateLimit-Remaining")
+        reset = response.headers.get("X-RateLimit-Reset")
+        if remaining is None:
+            return
+        try:
+            remaining_count = int(remaining)
+        except ValueError:
+            return
+        if remaining_count > threshold:
+            return
+        wait = f"{max(0.0, float(reset) - time.time()):.0f}s" if reset else "unknown"
+        self.on_log(
+            f"Software Heritage API quota running low ({remaining_count} request(s) "
+            f"remaining, resets in {wait})"
+        )
 
     def lookup_content(self, algo: str, hash_hex: str) -> ContentLookupResult:
         """Check whether a content object with the given checksum is archived.
