@@ -16,17 +16,22 @@ Because of this, a result of "unknown" for a `nar`-hashed FOD means "we could no
 
 ## Installation
 
+This project is packaged as a [flake](https://nix.dev/concepts/flakes), and requires no Python installation of its own.
+
 ```console
-cd nix-fod-swh-checker
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -e '.[dev]'
+nix run .#nix-fod-swh-check -- nixpkgs#hello
+```
+
+or install it into your profile:
+
+```console
+nix profile install .#nix-fod-swh-checker
 ```
 
 ## Usage
 
 ```console
-nix-fod-swh-check nixpkgs#hello
+nix run .#nix-fod-swh-check -- nixpkgs#hello
 ```
 
 ```console
@@ -49,7 +54,15 @@ Any installable accepted by `nix derivation show` works, e.g. a flake reference 
 
 ## Development
 
+Enter the dev shell (or let direnv do it via `.envrc`):
+
 ```console
-pip install -e '.[dev]'
+nix develop
 pytest
+```
+
+Run the full build, including the test suite, with:
+
+```console
+nix flake check
 ```
