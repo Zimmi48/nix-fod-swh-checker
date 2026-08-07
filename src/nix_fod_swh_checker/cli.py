@@ -13,6 +13,7 @@ from .checkpoint import default_checkpoint_path, load_checkpoint, save_checkpoin
 from .models import SWHCheckResult, SWHLookupMethod
 from .nix import NixCommandError, iter_fixed_output_derivations, show_derivations_recursive
 from .swh import DEFAULT_API_URL, SWHClient, SWHError
+from .swh_fod import UnsupportedSWHFodError, write_swh_fods_nix
 
 _STATUS_LABELS = {True: "KNOWN", False: "UNKNOWN", None: "UNDETERMINED"}
 
@@ -32,16 +33,44 @@ def _build_parser() -> argparse.ArgumentParser:
             "Software Heritage."
         ),
     )
-    parser.add_argument(
+    subparsers = parser.add_subparsers(dest="command", help="available commands")
+
+    check_parser = subparsers.add_parser(
+        "check",
+        help="check FODs against Software Heritage (default)",
+    )
+    check_parser.add_argument(
         "installable",
         help="the Nix installable to inspect, e.g. 'nixpkgs#hello' or a store path",
     )
-    parser.add_argument(
-        "--nix-binary",
-        default="nix",
-        help="path to the nix executable to use (default: %(default)s)",
+
+    generate_parser = subparsers.add_parser(
+        "generate-swh-fods",
+        help="generate a Nix expression with SWH-backed FODs from a checkpoint",
     )
-    parser.add_argument(
+    generate_parser.add_argument(
+        "installable",
+        help="the Nix installable that was previously checked",
+    )
+    generate_parser.add_argument(
+        "-o",
+        "--output",
+        default="swh-backed-fods.nix",
+        help="path to write the generated Nix expression (default: %(default)s)",
+    )
+    generate_parser.add_argument(
+        "--checkpoint-file",
+        default=None,
+        help="checkpoint to read results from (default: a per-installable file under $XDG_CACHE_HOME/nix-fod-swh-checker/)",
+    )
+    for sub in (check_parser, generate_parser):
+        sub.add_argument(
+            "--nix-binary",
+            default="nix",
+            help="path to the nix executable to use (default: %(default)s)",
+        )
+
+    check_parser.add_argument(
         "--swh-binary",
         default="swh",
         help=(
@@ -50,39 +79,39 @@ def _build_parser() -> argparse.ArgumentParser:
             "(default: %(default)s)"
         ),
     )
-    parser.add_argument(
+    check_parser.add_argument(
         "--swh-api-url",
         default=DEFAULT_API_URL,
         help="base URL of the Software Heritage API (default: %(default)s)",
     )
-    parser.add_argument(
+    check_parser.add_argument(
         "--swh-api-token",
         default=None,
         help="bearer token for the Software Heritage API (or set SWH_API_TOKEN)",
     )
-    parser.add_argument(
+    check_parser.add_argument(
         "--min-delay",
         type=float,
         default=1.0,
         help="minimum delay in seconds between Software Heritage API requests when unauthenticated (default: %(default)s)",
     )
-    parser.add_argument(
+    check_parser.add_argument(
         "--json",
         action="store_true",
         help="print machine-readable JSON instead of a human-readable report",
     )
-    parser.add_argument(
+    check_parser.add_argument(
         "--only-unknown",
         action="store_true",
         help="only report FODs that are not known to Software Heritage (or undetermined)",
     )
-    parser.add_argument(
+    check_parser.add_argument(
         "--quiet",
         "-q",
         action="store_true",
         help="do not print progress messages to stderr while checking FODs",
     )
-    parser.add_argument(
+    check_parser.add_argument(
         "--checkpoint-file",
         default=None,
         help=(
@@ -91,7 +120,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "per-installable file under $XDG_CACHE_HOME/nix-fod-swh-checker/)"
         ),
     )
-    parser.add_argument(
+    check_parser.add_argument(
         "--no-checkpoint",
         action="store_true",
         help="do not read or write a checkpoint file",
@@ -109,6 +138,7 @@ def _result_to_dict(result: SWHCheckResult) -> dict:
         "detail": result.detail,
         "swhid": result.swhid,
         "swh_url": result.swh_url,
+        "disarchive_spec": result.disarchive_spec,
     }
 
 
@@ -141,10 +171,7 @@ def _print_report(results: list[SWHCheckResult]) -> None:
     )
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = _build_parser()
-    args = parser.parse_args(argv)
-
+def _run_check_command(args: argparse.Namespace) -> int:
     api_token = args.swh_api_token or os.environ.get("SWH_API_TOKEN")
     on_log = None if args.quiet else lambda msg: print(msg, file=sys.stderr, flush=True)
 
@@ -233,6 +260,52 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     except KeyboardInterrupt:
         return _handle_interrupt(checked, checkpoint_path)
+
+
+def _run_generate_command(args: argparse.Namespace) -> int:
+    checkpoint_path = (
+        Path(args.checkpoint_file)
+        if args.checkpoint_file
+        else default_checkpoint_path(args.installable)
+    )
+    checked = load_checkpoint(checkpoint_path)
+    if not checked:
+        print(
+            f"error: no checkpoint found at {checkpoint_path}; "
+            "run 'nix-fod-swh-check check <installable>' first",
+            file=sys.stderr,
+        )
+        return 1
+
+    results = list(checked.values())
+    try:
+        expressions = write_swh_fods_nix(args.output, results)
+    except UnsupportedSWHFodError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(
+        f"wrote {len(expressions)} SWH-backed FOD expression(s) to {args.output}",
+        file=sys.stderr,
+    )
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = list(argv) if argv is not None else sys.argv[1:]
+    # For backwards compatibility, treat a bare installable as the argument
+    # to the "check" subcommand.
+    if argv and argv[0] not in ("check", "generate-swh-fods", "-h", "--help"):
+        argv = ["check", *argv]
+
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+
+    if args.command == "generate-swh-fods":
+        return _run_generate_command(args)
+
+    # Default to the check command for backwards compatibility.
+    return _run_check_command(args)
 
 
 def _handle_interrupt(

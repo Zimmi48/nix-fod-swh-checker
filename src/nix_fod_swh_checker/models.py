@@ -45,3 +45,4 @@ class SWHCheckResult:
     detail: str
     swhid: str | None = None
     swh_url: str | None = None
+    disarchive_spec: str | None = None

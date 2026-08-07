@@ -28,11 +28,15 @@
 
           nativeBuildInputs = [ pkgs.python3Packages.hatchling pkgs.makeWrapper ];
           propagatedBuildInputs = [ pkgs.python3Packages.requests ];
+          passthru.optional-dependencies = { disarchive = [ pkgs.disarchive ]; };
 
           nativeCheckInputs = [ pkgs.python3Packages.pytestCheckHook ];
           pythonImportsCheck = [ "nix_fod_swh_checker" ];
 
-          makeWrapperArgs = [ "--prefix" "PATH" ":" "${swhIdentify}/bin" ];
+          makeWrapperArgs = [
+            "--prefix" "PATH" ":" "${swhIdentify}/bin"
+            "--prefix" "PATH" ":" "${pkgs.disarchive}/bin"
+          ];
 
           meta = {
             description = "List the FODs reachable from a Nix attribute and check whether their sources are archived on Software Heritage";
@@ -56,6 +60,7 @@
           nativeBuildInputs = [
             pkgs.nixpkgs-fmt
             swhIdentify
+            pkgs.disarchive
 
             (pkgs.python3.withPackages (ps: [
               ps.requests

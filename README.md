@@ -52,7 +52,37 @@ Results are also checkpointed to disk as each FOD is checked (by default under `
 
 Pressing Ctrl+C exits cleanly (no Python traceback), reporting how many FODs were checked before the interruption and where the checkpoint was saved, with the conventional `130` exit code.
 
-Useful options:
+## Generating SWH-backed FODs
+
+For every FOD that is known to Software Heritage, the tool can generate an alternative fixed-output derivation that downloads the same content from SWH instead of the original upstream URL. Because the output hash is fixed to the same value, building these SWH-backed FODs populates the Nix store with the exact store paths the original derivation would have produced, allowing a subsequent build of the original installable to succeed even when upstream sources are unavailable.
+
+After running the checker, generate a Nix expression containing SWH-backed FODs for all known results:
+
+```console
+nix run .#nix-fod-swh-check -- generate-swh-fods nixpkgs#hello -o swh-backed-fods.nix
+```
+
+Then build them:
+
+```console
+nix build -f swh-backed-fods.nix
+```
+
+The generated expression handles three cases:
+
+- **Single files** (`method=flat` or `method=git` known as `swh:1:cnt:...`): download the raw bytes from the SWH `/content/` API.
+- **Directories** (`method=nar` or `method=git` known as `swh:1:dir:...`): download the SWH vault `flat` bundle (a tarball of the directory) and extract it.
+- **Archives known after disarchive**: for archives whose raw bytes are not in SWH but whose unpacked contents are, the tool captures a [GNU Guix `disarchive`](https://ngyro.com/software/disarchive.html) specification while checking. The generated derivation downloads the directory from SWH, reconstructs the exact original archive with `disarchive assemble`, and verifies it against the original flat hash.
+
+The `disarchive` binary is automatically available in the flake's dev shell and wrapped into the packaged application.
+
+## Commands and options
+
+The top-level command is `nix-fod-swh-check`. For backwards compatibility, a bare installable is treated as an argument to the `check` subcommand.
+
+### `check <installable>`
+
+Check every FOD reachable from `<installable>` against Software Heritage.
 
 - `--json` — print machine-readable JSON instead of the human-readable report.
 - `--only-unknown` — only report FODs that are not known to Software Heritage (or undetermined).
@@ -63,6 +93,14 @@ Useful options:
 - `--min-delay` — minimum delay (seconds) between Software Heritage API requests (default `1.0`), to stay within the anonymous rate limit.
 - `--nix-binary` — path to a specific `nix` executable.
 - `--swh-binary` — path to a specific `swh` executable (providing `swh identify`); the flake's package wraps this automatically.
+
+### `generate-swh-fods <installable>`
+
+Generate a Nix expression with SWH-backed FODs from a previously written checkpoint.
+
+- `-o`, `--output` — path to write the generated expression (default: `swh-backed-fods.nix`).
+- `--checkpoint-file` — checkpoint to read results from (default: the same per-installable file used by `check`).
+- `--nix-binary` — path to a specific `nix` executable (reserved for future use).
 
 Any installable accepted by `nix derivation show` works, e.g. a flake reference (`nixpkgs#hello`), an attribute path (`-f '<nixpkgs>' hello`, passed via extra `nix` invocation), or a store path.
 

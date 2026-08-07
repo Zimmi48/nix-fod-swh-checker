@@ -9,6 +9,7 @@ looks up the ``swh:1:dir:`` identifier of the unpacked tree.
 from __future__ import annotations
 
 import shutil
+import subprocess
 import tarfile
 import tempfile
 import zipfile
@@ -24,7 +25,7 @@ _ARCHIVE_URL = "https://archive.softwareheritage.org"
 
 
 class DisarchiveError(RuntimeError):
-    """Raised when an archive cannot be decompressed."""
+    """Raised when an archive cannot be decompressed or disassembled."""
 
 
 def try_disarchive(
@@ -33,6 +34,7 @@ def try_disarchive(
     *,
     nix_binary: str = "nix",
     swh_binary: str = "swh",
+    disarchive_binary: str = "disarchive",
     on_log: Callable[[str], None] | None = None,
 ) -> SWHCheckResult | None:
     """Realise a FOD, try to unpack it, and check its directory SWHID.
@@ -48,6 +50,11 @@ def try_disarchive(
 
     if not Path(archive_path).is_file():
         return None
+
+    try:
+        spec = disassemble_archive(archive_path, disarchive_binary=disarchive_binary)
+    except DisarchiveError:
+        spec = None
 
     try:
         unpacked_path = unpack_archive(archive_path)
@@ -74,7 +81,37 @@ def try_disarchive(
         detail=f"unpacked {archive_path} and computed {swhid}",
         swhid=swhid,
         swh_url=f"{_ARCHIVE_URL}/{swhid}" if known else None,
+        disarchive_spec=spec,
     )
+
+
+def disassemble_archive(
+    archive_path: str,
+    *,
+    disarchive_binary: str = "disarchive",
+) -> str:
+    """Run GNU Guix disarchive on an archive and return its specification.
+
+    The specification is an S-expression that describes the archive format
+    and metadata. It can be used with ``disarchive assemble`` to recreate
+    the exact same archive file from its directory contents.
+    """
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".disarchive", delete=False
+    ) as spec_file:
+        spec_path = spec_file.name
+
+    try:
+        cmd = [disarchive_binary, "disassemble", archive_path, "-o", spec_path]
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        spec = Path(spec_path).read_text()
+        if not spec.strip():
+            raise DisarchiveError(f"disarchive produced an empty spec for {archive_path}")
+        return spec
+    except (subprocess.CalledProcessError, OSError) as exc:
+        raise DisarchiveError(f"could not disassemble {archive_path}: {exc}") from exc
+    finally:
+        _cleanup(spec_path)
 
 
 def unpack_archive(archive_path: str) -> str:
@@ -160,4 +197,10 @@ def _single_top_level_directory(path: str) -> str | None:
 
 
 def _cleanup(path: str) -> None:
-    shutil.rmtree(path, ignore_errors=True)
+    try:
+        shutil.rmtree(path, ignore_errors=True)
+    except NotADirectoryError:
+        try:
+            Path(path).unlink(missing_ok=True)
+        except OSError:
+            pass
