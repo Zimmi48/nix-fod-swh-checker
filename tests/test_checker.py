@@ -1,6 +1,6 @@
 from nix_fod_swh_checker import checker as checker_module
 from nix_fod_swh_checker.checker import check_fod
-from nix_fod_swh_checker.models import FixedOutputDerivation, SWHLookupMethod
+from nix_fod_swh_checker.models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
 from nix_fod_swh_checker.nix import NixCommandError
 from nix_fod_swh_checker.swh import ContentLookupResult
 from nix_fod_swh_checker.swhid import SWHIdentifyError
@@ -47,9 +47,10 @@ def test_check_fod_flat_known():
     assert result.swh_url == f"https://archive.softwareheritage.org/swh:1:cnt:{sha1_git}"
 
 
-def test_check_fod_flat_unknown():
+def test_check_fod_flat_unknown(monkeypatch):
     fod = make_fod(method="flat", hash_algo="sha256", hash_hex="b" * 64)
     client = FakeSWHClient(content_known=False)
+    monkeypatch.setattr(checker_module, "try_disarchive", lambda *a, **k: None)
     result = check_fod(fod, client)
     assert result.known is False
     assert result.method == SWHLookupMethod.CONTENT_HASH
@@ -67,9 +68,10 @@ def test_check_fod_git_method_known_as_content():
     assert result.swh_url == f"https://archive.softwareheritage.org/{swhid}"
 
 
-def test_check_fod_git_method_unknown():
+def test_check_fod_git_method_unknown(monkeypatch):
     fod = make_fod(method="git", hash_algo="sha1", hash_hex="d" * 40)
     client = FakeSWHClient()
+    monkeypatch.setattr(checker_module, "try_disarchive", lambda *a, **k: None)
     result = check_fod(fod, client)
     assert result.known is False
     assert result.method == SWHLookupMethod.SWHID_KNOWN
@@ -149,3 +151,47 @@ def test_check_fod_nar_method_identify_failure_is_undetermined(monkeypatch):
     assert result.known is None
     assert result.method == SWHLookupMethod.UNSUPPORTED
     assert "boom" in result.detail
+
+
+def test_check_fod_flat_unknown_but_known_after_disarchive(monkeypatch):
+    fod = make_fod(method="flat", hash_algo="sha256", hash_hex="b" * 64)
+    swhid = "swh:1:dir:" + "c" * 40
+    client = FakeSWHClient(content_known=False)
+
+    def fake_try_disarchive(fod, client, *, nix_binary, swh_binary, on_log=None):
+        return SWHCheckResult(
+            fod=fod,
+            known=True,
+            method=SWHLookupMethod.KNOWN_AFTER_DISARCHIVE,
+            detail=f"unpacked /nix/store/archive.tar.gz and computed {swhid}",
+            swhid=swhid,
+            swh_url=f"https://archive.softwareheritage.org/{swhid}",
+        )
+
+    monkeypatch.setattr(checker_module, "try_disarchive", fake_try_disarchive)
+    result = check_fod(fod, client)
+    assert result.known is True
+    assert result.method == SWHLookupMethod.KNOWN_AFTER_DISARCHIVE
+    assert result.swhid == swhid
+
+
+def test_check_fod_git_unknown_but_known_after_disarchive(monkeypatch):
+    fod = make_fod(method="git", hash_algo="sha1", hash_hex="d" * 40)
+    swhid = "swh:1:dir:" + "e" * 40
+    client = FakeSWHClient()
+
+    def fake_try_disarchive(fod, client, *, nix_binary, swh_binary, on_log=None):
+        return SWHCheckResult(
+            fod=fod,
+            known=True,
+            method=SWHLookupMethod.KNOWN_AFTER_DISARCHIVE,
+            detail=f"unpacked /nix/store/archive.tar.gz and computed {swhid}",
+            swhid=swhid,
+            swh_url=f"https://archive.softwareheritage.org/{swhid}",
+        )
+
+    monkeypatch.setattr(checker_module, "try_disarchive", fake_try_disarchive)
+    result = check_fod(fod, client)
+    assert result.known is True
+    assert result.method == SWHLookupMethod.KNOWN_AFTER_DISARCHIVE
+    assert result.swhid == swhid

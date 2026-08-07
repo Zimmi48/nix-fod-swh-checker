@@ -9,6 +9,7 @@ List every [fixed-output derivation](https://nix.dev/manual/nix/stable/language/
 3. For each FOD, pick the best available comparison strategy against the Software Heritage archive, depending on its content-addressing `method`:
    - **`git`**: Nix hashes the output the same way git hashes blobs/trees, so the hash is directly checked against Software Heritage via a batch [`/known/`](https://docs.softwareheritage.org/devel/swh-web/api/) SWHID lookup (tried as both `swh:1:cnt:...` and `swh:1:dir:...`).
    - **`flat`**: the hash is a plain checksum of the raw downloaded bytes, which maps directly onto Software Heritage's [`/content/{algo}:{hash}/`](https://docs.softwareheritage.org/devel/swh-web/api/) endpoint.
+   - For **`git`** and **`flat`** FODs whose content is not directly known, the tool also tries to realise the output, unpack it as a standard archive (tar or zip), and look up the `swh:1:dir:` identifier of the unpacked contents. This catches archives that are not themselves archived on Software Heritage but whose contents are.
    - **Anything else** (most commonly `nar`, used by `fetchurl`/`fetchzip`-style directory outputs): the hash is computed over the [Nix Archive (NAR)](https://nix.dev/manual/nix/stable/store/file-system-object/content-address#serial-nix-archive) serialization, which has no Software Heritage equivalent, so there is no way to compare it directly. Instead of guessing, the tool:
      1. realises the FOD with `nix build --no-link --print-out-paths <drv>^<output>`, which fetches it from a binary cache (e.g. `cache.nixos.org`) whenever possible instead of rebuilding it from scratch;
      2. computes the resulting path's actual [SWHID](https://docs.softwareheritage.org/devel/swh-model/persistent-identifiers.html) using the reference [`swh identify`](https://docs.softwareheritage.org/devel/swh-model/cli.html) tool;
@@ -42,7 +43,7 @@ nix run .#nix-fod-swh-check -- nixpkgs#hello
     method=build_and_identify: built /nix/store/....-hello-2.10 and computed swh:1:dir:d198bc9d7a6bcf6db04f476d29314f157507d505
     https://archive.softwareheritage.org/swh:1:dir:d198bc9d7a6bcf6db04f476d29314f157507d505
 
-1 FOD(s) checked: 1 known, 0 unknown, 0 undetermined
+1 FOD(s) checked: 1 known, 0 known after disarchive, 0 unknown, 0 undetermined
 ```
 
 Checking FODs can be slow -- realising a `nar`-hashed FOD may need to download it, and the Software Heritage API is rate-limited -- so progress messages (what's being listed/built/queried, and rate-limit waits) are printed to stderr as the tool runs. Pass `--quiet`/`-q` to suppress them.

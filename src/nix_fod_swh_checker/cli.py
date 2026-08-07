@@ -10,11 +10,17 @@ from pathlib import Path
 
 from .checker import check_fod
 from .checkpoint import default_checkpoint_path, load_checkpoint, save_checkpoint
-from .models import SWHCheckResult
+from .models import SWHCheckResult, SWHLookupMethod
 from .nix import NixCommandError, iter_fixed_output_derivations, show_derivations_recursive
 from .swh import DEFAULT_API_URL, SWHClient, SWHError
 
 _STATUS_LABELS = {True: "KNOWN", False: "UNKNOWN", None: "UNDETERMINED"}
+
+
+def _status_label(result: SWHCheckResult) -> str:
+    if result.known is True and result.method == SWHLookupMethod.KNOWN_AFTER_DISARCHIVE:
+        return "KNOWN AFTER DISARCHIVE"
+    return _STATUS_LABELS[result.known]
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -111,17 +117,27 @@ def _print_report(results: list[SWHCheckResult]) -> None:
         print("nothing to report")
         return
     for result in results:
-        print(f"[{_STATUS_LABELS[result.known]}] {result.fod.label}")
+        print(f"[{_status_label(result)}] {result.fod.label}")
         print(f"    method={result.method.value}: {result.detail}")
         if result.swh_url:
             print(f"    {result.swh_url}")
 
-    known = sum(1 for r in results if r.known is True)
+    known = sum(
+        1
+        for r in results
+        if r.known is True and r.method != SWHLookupMethod.KNOWN_AFTER_DISARCHIVE
+    )
+    known_after_disarchive = sum(
+        1
+        for r in results
+        if r.known is True and r.method == SWHLookupMethod.KNOWN_AFTER_DISARCHIVE
+    )
     unknown = sum(1 for r in results if r.known is False)
     undetermined = sum(1 for r in results if r.known is None)
     print(
         f"\n{len(results)} FOD(s) checked: "
-        f"{known} known, {unknown} unknown, {undetermined} undetermined"
+        f"{known} known, {known_after_disarchive} known after disarchive, "
+        f"{unknown} unknown, {undetermined} undetermined"
     )
 
 

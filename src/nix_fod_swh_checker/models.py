@@ -11,6 +11,7 @@ class SWHLookupMethod(str, Enum):
     CONTENT_HASH = "content_hash"
     SWHID_KNOWN = "swhid_known"
     BUILD_AND_IDENTIFY = "build_and_identify"
+    KNOWN_AFTER_DISARCHIVE = "known_after_disarchive"
     UNSUPPORTED = "unsupported"
 
 

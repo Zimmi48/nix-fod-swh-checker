@@ -1,6 +1,7 @@
 import json
 
 from nix_fod_swh_checker import cli
+from nix_fod_swh_checker.cli import _print_report
 from nix_fod_swh_checker.models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
 
 
@@ -83,3 +84,22 @@ def test_main_handles_keyboard_interrupt_mid_loop_and_saves_checkpoint(
 
     saved = json.loads(checkpoint_file.read_text())
     assert list(saved["results"].keys()) == [fod1.label]
+
+
+def test_print_report_shows_known_after_disarchive_separately(capsys):
+    fod = _fod("a")
+    results = [
+        SWHCheckResult(fod=fod, known=True, method=SWHLookupMethod.CONTENT_HASH, detail="d"),
+        SWHCheckResult(
+            fod=fod,
+            known=True,
+            method=SWHLookupMethod.KNOWN_AFTER_DISARCHIVE,
+            detail="unpacked archive",
+            swhid="swh:1:dir:" + "b" * 40,
+        ),
+        SWHCheckResult(fod=fod, known=False, method=SWHLookupMethod.SWHID_KNOWN, detail="d"),
+    ]
+    _print_report(results)
+    out = capsys.readouterr().out
+    assert "KNOWN AFTER DISARCHIVE" in out
+    assert "1 known, 1 known after disarchive, 1 unknown, 0 undetermined" in out

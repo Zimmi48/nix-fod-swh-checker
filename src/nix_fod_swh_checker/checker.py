@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from typing import Callable
 
+from .disarchive import try_disarchive
 from .models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
 from .nix import NixCommandError, realise_fod
 from .swh import CONTENT_LOOKUP_ALGOS, SWHClient
@@ -46,12 +47,16 @@ def check_fod(
     if fod.method == "git" and fod.hash_algo == "sha1" and fod.hash_hex:
         if on_log:
             on_log(f"{fod.label}: method=git, checking its SWHID directly")
-        return _check_via_swhid(fod, client)
+        return _check_via_swhid(
+            fod, client, nix_binary=nix_binary, swh_binary=swh_binary, on_log=on_log
+        )
 
     if fod.method == "flat" and fod.hash_algo in CONTENT_LOOKUP_ALGOS and fod.hash_hex:
         if on_log:
             on_log(f"{fod.label}: method=flat, checking its content hash directly")
-        return _check_via_content_hash(fod, client)
+        return _check_via_content_hash(
+            fod, client, nix_binary=nix_binary, swh_binary=swh_binary, on_log=on_log
+        )
 
     if on_log:
         on_log(
@@ -63,7 +68,14 @@ def check_fod(
     )
 
 
-def _check_via_content_hash(fod: FixedOutputDerivation, client: SWHClient) -> SWHCheckResult:
+def _check_via_content_hash(
+    fod: FixedOutputDerivation,
+    client: SWHClient,
+    *,
+    nix_binary: str = "nix",
+    swh_binary: str = "swh",
+    on_log: Callable[[str], None] | None = None,
+) -> SWHCheckResult:
     result = client.lookup_content(fod.hash_algo, fod.hash_hex)
     swhid: str | None = None
     swh_url: str | None = None
@@ -72,17 +84,36 @@ def _check_via_content_hash(fod: FixedOutputDerivation, client: SWHClient) -> SW
         if sha1_git:
             swhid = f"swh:1:cnt:{sha1_git}"
             swh_url = f"{_ARCHIVE_URL}/{swhid}"
+    if result.known:
+        return SWHCheckResult(
+            fod=fod,
+            known=True,
+            method=SWHLookupMethod.CONTENT_HASH,
+            detail=f"content lookup by {fod.hash_algo}:{fod.hash_hex}",
+            swhid=swhid,
+            swh_url=swh_url,
+        )
+    disarchive_result = try_disarchive(
+        fod, client, nix_binary=nix_binary, swh_binary=swh_binary, on_log=on_log
+    )
+    if disarchive_result is not None:
+        return disarchive_result
     return SWHCheckResult(
         fod=fod,
-        known=result.known,
+        known=False,
         method=SWHLookupMethod.CONTENT_HASH,
         detail=f"content lookup by {fod.hash_algo}:{fod.hash_hex}",
-        swhid=swhid,
-        swh_url=swh_url,
     )
 
 
-def _check_via_swhid(fod: FixedOutputDerivation, client: SWHClient) -> SWHCheckResult:
+def _check_via_swhid(
+    fod: FixedOutputDerivation,
+    client: SWHClient,
+    *,
+    nix_binary: str = "nix",
+    swh_binary: str = "swh",
+    on_log: Callable[[str], None] | None = None,
+) -> SWHCheckResult:
     # We don't know upfront whether the FOD output is a single file (SWH
     # "content") or a directory (SWH "directory"), so probe both.
     candidates = [f"swh:1:cnt:{fod.hash_hex}", f"swh:1:dir:{fod.hash_hex}"]
@@ -98,6 +129,11 @@ def _check_via_swhid(fod: FixedOutputDerivation, client: SWHClient) -> SWHCheckR
             swhid=swhid,
             swh_url=f"{_ARCHIVE_URL}/{swhid}",
         )
+    disarchive_result = try_disarchive(
+        fod, client, nix_binary=nix_binary, swh_binary=swh_binary, on_log=on_log
+    )
+    if disarchive_result is not None:
+        return disarchive_result
     return SWHCheckResult(
         fod=fod,
         known=False,
