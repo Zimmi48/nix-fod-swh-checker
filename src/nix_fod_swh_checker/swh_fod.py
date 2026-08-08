@@ -136,20 +136,43 @@ def _disarchive_expression(result: SWHCheckResult) -> SWHFodExpression | None:
     fod = result.fod
     if not fod.hash_algo or not fod.hash_hex:
         return None
-    if not result.swhid or not result.swhid.startswith("swh:1:dir:"):
-        return None
     if not result.disarchive_spec:
         return None
-    return SWHFodExpression(
-        label=fod.label,
-        nix_code=_disarchive_fod_derivation(
-            name=_safe_name(fod.name),
-            hash_algo=fod.hash_algo,
-            hash_hex=fod.hash_hex,
-            swhid=result.swhid,
-            spec=result.disarchive_spec,
-        ),
-    )
+
+    # If disarchive's own SWHID is known, we can rebuild the archive directly
+    # from the directory disarchive expects. Otherwise, fall back to the
+    # stripped SWHID and re-wrap the stripped contents inside the original
+    # top-level directory.
+    if result.disarchive_swhid and result.swhid == result.disarchive_swhid:
+        return SWHFodExpression(
+            label=fod.label,
+            nix_code=_disarchive_fod_derivation(
+                name=_safe_name(fod.name),
+                hash_algo=fod.hash_algo,
+                hash_hex=fod.hash_hex,
+                swhid=result.disarchive_swhid,
+                spec=result.disarchive_spec,
+            ),
+        )
+
+    if (
+        result.swhid
+        and result.swhid.startswith("swh:1:dir:")
+        and result.disarchive_top_dir
+    ):
+        return SWHFodExpression(
+            label=fod.label,
+            nix_code=_disarchive_wrapped_fod_derivation(
+                name=_safe_name(fod.name),
+                hash_algo=fod.hash_algo,
+                hash_hex=fod.hash_hex,
+                stripped_swhid=result.swhid,
+                top_dir=result.disarchive_top_dir,
+                spec=result.disarchive_spec,
+            ),
+        )
+
+    return None
 
 
 def _flat_fod_derivation(
@@ -224,6 +247,40 @@ pkgs.stdenv.mkDerivation {{
 {escaped_spec}
 DISARCHIVE_EOF
     ${{pkgs.disarchive}}/bin/disarchive assemble "$dir" tmp/spec -o $out
+  '';
+}}
+"""
+
+
+def _disarchive_wrapped_fod_derivation(
+    *,
+    name: str,
+    hash_algo: str,
+    hash_hex: str,
+    stripped_swhid: str,
+    top_dir: str,
+    spec: str,
+) -> str:
+    url = f"{_SWH_API_URL}/vault/flat/{stripped_swhid}/raw"
+    escaped_spec = _escape_heredoc(spec)
+    return f"""{{ pkgs }}:
+pkgs.stdenv.mkDerivation {{
+  name = {shlex.quote(name)};
+  outputHashMode = "flat";
+  outputHashAlgo = {shlex.quote(hash_algo)};
+  outputHash = {shlex.quote(hash_hex)};
+  nativeBuildInputs = [ pkgs.disarchive pkgs.curl pkgs.gnutar ];
+  buildCommand = ''
+    mkdir -p tmp
+    ${{pkgs.curl}}/bin/curl -L -f -o tmp/bundle.tar.gz {shlex.quote(url)}
+    ${{pkgs.gnutar}}/bin/tar -xzf tmp/bundle.tar.gz -C tmp
+    stripped=$(find tmp -mindepth 1 -maxdepth 1 -type d | head -n1)
+    mkdir -p tmp/wrapped/{shlex.quote(top_dir)}
+    find "$stripped" -mindepth 1 -maxdepth 1 -exec mv {{}} tmp/wrapped/{shlex.quote(top_dir)}/ \\;
+    cat > tmp/spec <<'DISARCHIVE_EOF'
+{escaped_spec}
+DISARCHIVE_EOF
+    ${{pkgs.disarchive}}/bin/disarchive assemble tmp/wrapped tmp/spec -o $out
   '';
 }}
 """

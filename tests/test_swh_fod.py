@@ -35,6 +35,8 @@ def make_result(**overrides):
         swhid=None,
         swh_url=None,
         disarchive_spec=None,
+        disarchive_swhid=None,
+        disarchive_top_dir=None,
     )
     defaults.update(overrides)
     return SWHCheckResult(**defaults)
@@ -102,12 +104,13 @@ def test_disarchive_expression_requires_spec():
     assert swh_fod_expression(result) is None
 
 
-def test_disarchive_expression_with_spec():
+def test_disarchive_expression_with_direct_swhid():
     swhid = "swh:1:dir:" + "d" * 40
     result = make_result(
         fod=make_fod(method="flat", hash_algo="sha256", hash_hex="a" * 64),
         method=SWHLookupMethod.KNOWN_AFTER_DISARCHIVE,
         swhid=swhid,
+        disarchive_swhid=swhid,
         disarchive_spec="(disarchive (version 0))",
     )
     expr = swh_fod_expression(result)
@@ -119,12 +122,33 @@ def test_disarchive_expression_with_spec():
     assert "(disarchive (version 0))" in expr.nix_code
 
 
+def test_disarchive_expression_with_wrapped_stripped_swhid():
+    stripped = "swh:1:dir:" + "d" * 40
+    disarchive_swhid = "swh:1:dir:" + "e" * 40
+    result = make_result(
+        fod=make_fod(method="flat", hash_algo="sha256", hash_hex="a" * 64),
+        method=SWHLookupMethod.KNOWN_AFTER_DISARCHIVE,
+        swhid=stripped,
+        disarchive_swhid=disarchive_swhid,
+        disarchive_top_dir="hello-1.0",
+        disarchive_spec="(disarchive (version 0))",
+    )
+    expr = swh_fod_expression(result)
+    assert isinstance(expr, SWHFodExpression)
+    assert "outputHashMode = \"flat\"" in expr.nix_code
+    assert f"vault/flat/{stripped}/raw" in expr.nix_code
+    assert "tmp/wrapped/hello-1.0" in expr.nix_code
+    assert "pkgs.disarchive" in expr.nix_code
+    assert "disarchive assemble" in expr.nix_code
+
+
 def test_disarchive_expression_escapes_eof_delimiter():
     swhid = "swh:1:dir:" + "d" * 40
     result = make_result(
         fod=make_fod(method="flat", hash_algo="sha256", hash_hex="a" * 64),
         method=SWHLookupMethod.KNOWN_AFTER_DISARCHIVE,
         swhid=swhid,
+        disarchive_swhid=swhid,
         disarchive_spec="DISARCHIVE_EOF",
     )
     expr = swh_fod_expression(result)

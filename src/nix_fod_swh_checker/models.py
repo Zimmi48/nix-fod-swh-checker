@@ -46,3 +46,5 @@ class SWHCheckResult:
     swhid: str | None = None
     swh_url: str | None = None
     disarchive_spec: str | None = None
+    disarchive_swhid: str | None = None
+    disarchive_top_dir: str | None = None

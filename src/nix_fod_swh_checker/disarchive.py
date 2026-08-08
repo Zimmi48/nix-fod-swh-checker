@@ -5,9 +5,25 @@ a blob) that is not known to Software Heritage as a content object, it may
 still be an archive whose *contents* are archived as a directory. This module
 realises such FODs, unpacks the resulting archive with standard tools, and
 looks up the ``swh:1:dir:`` identifier of the unpacked tree.
+
+It also uses GNU Guix ``disarchive`` to capture the archive's metadata
+specification. ``disarchive`` computes its own directory SWHID, which may
+include a single top-level directory that Nix normally strips. We therefore
+keep track of two SWHIDs:
+
+- the *stripped* SWHID, computed from the tree after applying Nix's
+  ``stripHash`` semantics; and
+- the *disarchive* SWHID, embedded by ``disarchive`` in its specification.
+
+The stripped SWHID is more likely to be archived by Software Heritage, but
+rebuilding the original archive requires the disarchive SWHID. When only the
+stripped SWHID is known, we can still reconstruct the archive by wrapping the
+stripped directory back inside its original top-level directory before calling
+``disarchive assemble``.
 """
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import tarfile
@@ -56,6 +72,8 @@ def try_disarchive(
     except DisarchiveError:
         spec = None
 
+    disarchive_swhid = _extract_disarchive_swhid(spec) if spec else None
+
     try:
         unpacked_path = unpack_archive(archive_path)
     except DisarchiveError:
@@ -64,25 +82,52 @@ def try_disarchive(
     # Archives that contain a single top-level directory are treated like
     # Nix's stripHash: the directory *inside* is the source tree.
     content_path = _single_top_level_directory(unpacked_path) or unpacked_path
+    stripped_top_dir = (
+        Path(content_path).name if content_path != unpacked_path else None
+    )
 
     try:
-        swhid = compute_swhid(content_path, swh_binary=swh_binary, on_log=on_log)
+        stripped_swhid = compute_swhid(
+            content_path, swh_binary=swh_binary, on_log=on_log
+        )
     except SWHIdentifyError:
         _cleanup(unpacked_path)
         return None
 
-    known = client.lookup_known_swhids([swhid]).get(swhid, False)
+    candidates = [swhid for swhid in (stripped_swhid, disarchive_swhid) if swhid]
+    known_map = client.lookup_known_swhids(candidates)
+    stripped_known = known_map.get(stripped_swhid, False)
+    disarchive_known = known_map.get(disarchive_swhid, False)
+    known = stripped_known or disarchive_known
+
     _cleanup(unpacked_path)
+
+    # Prefer the disarchive SWHID for reporting when it is known, because that
+    # is the directory disarchive can rebuild from directly. Otherwise report
+    # the stripped SWHID, which is more likely to be archived.
+    reported_swhid = disarchive_swhid if disarchive_known else stripped_swhid
 
     return SWHCheckResult(
         fod=fod,
         known=known,
         method=SWHLookupMethod.KNOWN_AFTER_DISARCHIVE,
-        detail=f"unpacked {archive_path} and computed {swhid}",
-        swhid=swhid,
-        swh_url=f"{_ARCHIVE_URL}/{swhid}" if known else None,
+        detail=f"unpacked {archive_path} and computed {stripped_swhid}",
+        swhid=reported_swhid,
+        swh_url=f"{_ARCHIVE_URL}/{reported_swhid}" if known else None,
         disarchive_spec=spec,
+        disarchive_swhid=disarchive_swhid,
+        disarchive_top_dir=stripped_top_dir,
     )
+
+
+def _extract_disarchive_swhid(spec: str) -> str | None:
+    """Return the ``swh:1:dir:`` identifier embedded in a disarchive spec.
+
+    The specification contains a single ``directory-ref`` with a list of
+    addresses; we extract the SWHID address if present.
+    """
+    match = re.search(r'\(swhid\s+"(swh:1:dir:[a-f0-9]+)"\)', spec)
+    return match.group(1) if match else None
 
 
 def disassemble_archive(

@@ -139,6 +139,8 @@ def _result_to_dict(result: SWHCheckResult) -> dict:
         "swhid": result.swhid,
         "swh_url": result.swh_url,
         "disarchive_spec": result.disarchive_spec,
+        "disarchive_swhid": result.disarchive_swhid,
+        "disarchive_top_dir": result.disarchive_top_dir,
     }
 
 
