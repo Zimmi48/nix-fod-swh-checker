@@ -28,7 +28,6 @@
 
           nativeBuildInputs = [ pkgs.python3Packages.hatchling pkgs.makeWrapper ];
           propagatedBuildInputs = [ pkgs.python3Packages.requests ];
-          passthru.optional-dependencies = { disarchive = [ pkgs.disarchive ]; };
 
           nativeCheckInputs = [ pkgs.python3Packages.pytestCheckHook ];
           pythonImportsCheck = [ "nix_fod_swh_checker" ];

@@ -9,7 +9,7 @@ List every [fixed-output derivation](https://nix.dev/manual/nix/stable/language/
 3. For each FOD, pick the best available comparison strategy against the Software Heritage archive, depending on its content-addressing `method`:
    - **`git`**: Nix hashes the output the same way git hashes blobs/trees, so the hash is directly checked against Software Heritage via a batch [`/known/`](https://docs.softwareheritage.org/devel/swh-web/api/) SWHID lookup (tried as both `swh:1:cnt:...` and `swh:1:dir:...`).
    - **`flat`**: the hash is a plain checksum of the raw downloaded bytes, which maps directly onto Software Heritage's [`/content/{algo}:{hash}/`](https://docs.softwareheritage.org/devel/swh-web/api/) endpoint.
-   - For **`git`** and **`flat`** FODs whose content is not directly known, the tool also tries to realise the output, unpack it as a standard archive (tar or zip), and look up the `swh:1:dir:` identifier of the unpacked contents. This catches archives that are not themselves archived on Software Heritage but whose contents are.
+   - For **`git`** and **`flat`** FODs whose content is not directly known, the tool also tries to realise the output, unpack it as a standard archive (tar or zip), and look up the `swh:1:dir:` identifier of the unpacked contents. This catches archives that are not themselves archived on Software Heritage but whose contents are. When the unpacked directory is known, the result is reported as **known after disarchive**.
    - **Anything else** (most commonly `nar`, used by `fetchurl`/`fetchzip`-style directory outputs): the hash is computed over the [Nix Archive (NAR)](https://nix.dev/manual/nix/stable/store/file-system-object/content-address#serial-nix-archive) serialization, which has no Software Heritage equivalent, so there is no way to compare it directly. Instead of guessing, the tool:
      1. realises the FOD with `nix build --no-link --print-out-paths <drv>^<output>`, which fetches it from a binary cache (e.g. `cache.nixos.org`) whenever possible instead of rebuilding it from scratch;
      2. computes the resulting path's actual [SWHID](https://docs.softwareheritage.org/devel/swh-model/persistent-identifiers.html) using the reference [`swh identify`](https://docs.softwareheritage.org/devel/swh-model/cli.html) tool;
@@ -23,7 +23,7 @@ No heuristics or guessing are involved: every result is either a direct hash com
 This project is packaged as a [flake](https://nix.dev/concepts/flakes), and requires no Python installation of its own.
 
 ```console
-nix run .#nix-fod-swh-check -- nixpkgs#hello
+nix run .#nix-fod-swh-check -- check nixpkgs#hello
 ```
 
 or install it into your profile:
@@ -35,7 +35,7 @@ nix profile install .#nix-fod-swh-checker
 ## Usage
 
 ```console
-nix run .#nix-fod-swh-check -- nixpkgs#hello
+nix run .#nix-fod-swh-check -- check nixpkgs#hello
 ```
 
 ```console
@@ -45,6 +45,8 @@ nix run .#nix-fod-swh-check -- nixpkgs#hello
 
 1 FOD(s) checked: 1 known, 0 known after disarchive, 0 unknown, 0 undetermined
 ```
+
+A Software Heritage API token is strongly recommended. Anonymous requests are heavily rate-limited and may fail for large installables. Set `SWH_API_TOKEN` or pass `--swh-api-token` to `check`.
 
 Checking FODs can be slow -- realising a `nar`-hashed FOD may need to download it, and the Software Heritage API is rate-limited -- so progress messages (what's being listed/built/queried, and rate-limit waits) are printed to stderr as the tool runs. Pass `--quiet`/`-q` to suppress them.
 
@@ -78,7 +80,7 @@ The `disarchive` binary is automatically available in the flake's dev shell and 
 
 ## Commands and options
 
-The top-level command is `nix-fod-swh-check`. For backwards compatibility, a bare installable is treated as an argument to the `check` subcommand.
+The top-level command is `nix-fod-swh-check`. It requires an explicit subcommand.
 
 ### `check <installable>`
 
@@ -91,8 +93,6 @@ Check every FOD reachable from `<installable>` against Software Heritage.
 - `--no-checkpoint` — do not read or write a checkpoint file.
 - `--swh-api-token` / `SWH_API_TOKEN` — authenticate to the Software Heritage API to raise rate limits.
 - `--min-delay` — minimum delay (seconds) between Software Heritage API requests (default `1.0`), to stay within the anonymous rate limit.
-- `--nix-binary` — path to a specific `nix` executable.
-- `--swh-binary` — path to a specific `swh` executable (providing `swh identify`); the flake's package wraps this automatically.
 
 ### `generate-swh-fods <installable>`
 
@@ -100,7 +100,6 @@ Generate a Nix expression with SWH-backed FODs from a previously written checkpo
 
 - `-o`, `--output` — path to write the generated expression (default: `swh-backed-fods.nix`).
 - `--checkpoint-file` — checkpoint to read results from (default: the same per-installable file used by `check`).
-- `--nix-binary` — path to a specific `nix` executable (reserved for future use).
 
 Any installable accepted by `nix derivation show` works, e.g. a flake reference (`nixpkgs#hello`), an attribute path (`-f '<nixpkgs>' hello`, passed via extra `nix` invocation), or a store path.
 

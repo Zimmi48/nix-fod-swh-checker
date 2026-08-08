@@ -63,22 +63,6 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="checkpoint to read results from (default: a per-installable file under $XDG_CACHE_HOME/nix-fod-swh-checker/)",
     )
-    for sub in (check_parser, generate_parser):
-        sub.add_argument(
-            "--nix-binary",
-            default="nix",
-            help="path to the nix executable to use (default: %(default)s)",
-        )
-
-    check_parser.add_argument(
-        "--swh-binary",
-        default="swh",
-        help=(
-            "path to the Software Heritage 'swh' CLI (providing 'swh identify'), "
-            "used to compute SWHIDs for FODs whose hash cannot be checked directly "
-            "(default: %(default)s)"
-        ),
-    )
     check_parser.add_argument(
         "--swh-api-url",
         default=DEFAULT_API_URL,
@@ -177,14 +161,19 @@ def _run_check_command(args: argparse.Namespace) -> int:
     api_token = args.swh_api_token or os.environ.get("SWH_API_TOKEN")
     on_log = None if args.quiet else lambda msg: print(msg, file=sys.stderr, flush=True)
 
+    if not api_token and on_log:
+        on_log(
+            "warning: no Software Heritage API token provided; "
+            "anonymous requests are heavily rate-limited. "
+            "Use --swh-api-token or set SWH_API_TOKEN."
+        )
+
     checkpoint_path: Path | None = None
     checked: dict[str, SWHCheckResult] = {}
 
     try:
         try:
-            derivations = show_derivations_recursive(
-                args.installable, nix_binary=args.nix_binary, on_log=on_log
-            )
+            derivations = show_derivations_recursive(args.installable, on_log=on_log)
         except NixCommandError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
@@ -233,13 +222,7 @@ def _run_check_command(args: argparse.Namespace) -> int:
                 if on_log:
                     on_log(f"[{index}/{total}] checking {fod.label}")
                 try:
-                    result = check_fod(
-                        fod,
-                        client,
-                        nix_binary=args.nix_binary,
-                        swh_binary=args.swh_binary,
-                        on_log=on_log,
-                    )
+                    result = check_fod(fod, client, on_log=on_log)
                 except SWHError as exc:
                     print(f"warning: {exc}", file=sys.stderr)
                     continue
@@ -294,19 +277,12 @@ def _run_generate_command(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    argv = list(argv) if argv is not None else sys.argv[1:]
-    # For backwards compatibility, treat a bare installable as the argument
-    # to the "check" subcommand.
-    if argv and argv[0] not in ("check", "generate-swh-fods", "-h", "--help"):
-        argv = ["check", *argv]
-
     parser = _build_parser()
     args = parser.parse_args(argv)
 
     if args.command == "generate-swh-fods":
         return _run_generate_command(args)
 
-    # Default to the check command for backwards compatibility.
     return _run_check_command(args)
 
 

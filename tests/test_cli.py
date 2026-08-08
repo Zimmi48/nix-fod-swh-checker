@@ -30,7 +30,7 @@ def test_main_returns_1_on_nix_command_error(monkeypatch, capsys):
         raise cli.NixCommandError("boom")
 
     monkeypatch.setattr(cli, "show_derivations_recursive", fail)
-    exit_code = cli.main(["nixpkgs#hello", "--quiet"])
+    exit_code = cli.main(["check", "nixpkgs#hello", "--quiet"])
     assert exit_code == 1
     assert "boom" in capsys.readouterr().err
 
@@ -40,7 +40,7 @@ def test_main_handles_keyboard_interrupt_before_any_fod_checked(monkeypatch, cap
         raise KeyboardInterrupt
 
     monkeypatch.setattr(cli, "show_derivations_recursive", fail)
-    exit_code = cli.main(["nixpkgs#hello", "--quiet", "--no-checkpoint"])
+    exit_code = cli.main(["check", "nixpkgs#hello", "--quiet", "--no-checkpoint"])
     err = capsys.readouterr().err
 
     assert exit_code == 130
@@ -73,7 +73,7 @@ def test_main_handles_keyboard_interrupt_mid_loop_and_saves_checkpoint(
 
     checkpoint_file = tmp_path / "ckpt.json"
     exit_code = cli.main(
-        ["nixpkgs#hello", "--quiet", "--checkpoint-file", str(checkpoint_file)]
+        ["check", "nixpkgs#hello", "--quiet", "--checkpoint-file", str(checkpoint_file)]
     )
     err = capsys.readouterr().err
 
@@ -84,6 +84,32 @@ def test_main_handles_keyboard_interrupt_mid_loop_and_saves_checkpoint(
 
     saved = json.loads(checkpoint_file.read_text())
     assert list(saved["results"].keys()) == [fod1.label]
+
+
+def test_check_warns_when_no_swh_api_token(monkeypatch, capsys):
+    def fail(*args, **kwargs):
+        raise cli.NixCommandError("boom")
+
+    monkeypatch.setattr(cli, "show_derivations_recursive", fail)
+    monkeypatch.delenv("SWH_API_TOKEN", raising=False)
+    exit_code = cli.main(["check", "nixpkgs#hello"])
+    err = capsys.readouterr().err
+
+    assert exit_code == 1
+    assert "warning: no Software Heritage API token" in err
+
+
+def test_check_does_not_warn_when_token_is_set(monkeypatch, capsys):
+    def fail(*args, **kwargs):
+        raise cli.NixCommandError("boom")
+
+    monkeypatch.setattr(cli, "show_derivations_recursive", fail)
+    monkeypatch.setenv("SWH_API_TOKEN", "secret-token")
+    exit_code = cli.main(["check", "nixpkgs#hello"])
+    err = capsys.readouterr().err
+
+    assert exit_code == 1
+    assert "warning: no Software Heritage API token" not in err
 
 
 def test_print_report_shows_known_after_disarchive_separately(capsys):
