@@ -21,24 +21,34 @@ def compute_swhid(
     *,
     swh_binary: str = "swh",
     on_log: Callable[[str], None] | None = None,
+    timeout: float = 30.0,
 ) -> str:
     """Compute the intrinsic SWHID of a local file or directory.
 
     Runs `swh identify --no-filename <path>`, which prints a single
     `swh:1:{cnt,dir}:<hash>` identifier derived directly from the object's
     content and, for directories, the content of its entries.
+
+    A timeout is applied because `swh identify` can hang indefinitely on
+    certain paths (e.g. special files such as FIFOs inside a directory tree).
+    When the timeout is reached the FOD is reported as undetermined rather
+    than blocking the whole check run.
     """
     cmd = [swh_binary, "identify", "--no-filename", path]
     if on_log:
         on_log(f"computing the SWHID of {path} via 'swh identify' (may be slow for large trees)...")
     try:
-        proc = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        proc = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=timeout)
     except FileNotFoundError as exc:
         raise SWHIdentifyError(f"could not find the '{swh_binary}' executable") from exc
     except subprocess.CalledProcessError as exc:
         stderr = exc.stderr.strip() if exc.stderr else ""
         raise SWHIdentifyError(
             f"'{' '.join(cmd)}' failed with exit code {exc.returncode}: {stderr}"
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise SWHIdentifyError(
+            f"'{' '.join(cmd)}' timed out after {timeout}s"
         ) from exc
 
     lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]

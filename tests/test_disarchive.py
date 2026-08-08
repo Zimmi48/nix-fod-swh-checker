@@ -124,7 +124,7 @@ def test_try_disarchive_known_directory_swhid(monkeypatch, tmp_path):
     monkeypatch.setattr(
         disarchive_module,
         "compute_swhid",
-        lambda path, *, swh_binary, on_log=None: swhid,
+        lambda path, *, swh_binary, on_log=None, timeout=None: swhid,
     )
 
     client = FakeSWHClient(known_swhids={swhid: True})
@@ -146,7 +146,7 @@ def test_try_disarchive_unknown_directory_swhid(monkeypatch, tmp_path):
     monkeypatch.setattr(
         disarchive_module,
         "compute_swhid",
-        lambda path, *, swh_binary, on_log=None: swhid,
+        lambda path, *, swh_binary, on_log=None, timeout=None: swhid,
     )
 
     client = FakeSWHClient()

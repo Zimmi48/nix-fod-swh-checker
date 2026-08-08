@@ -44,6 +44,10 @@ class DisarchiveError(RuntimeError):
     """Raised when an archive cannot be decompressed or disassembled."""
 
 
+class DisarchiveTimeoutError(DisarchiveError):
+    """Raised when ``disarchive disassemble`` exceeds its timeout."""
+
+
 def try_disarchive(
     fod: FixedOutputDerivation,
     client: SWHClient,
@@ -51,6 +55,8 @@ def try_disarchive(
     nix_binary: str = "nix",
     swh_binary: str = "swh",
     disarchive_binary: str = "disarchive",
+    swh_identify_timeout: float = 30.0,
+    disarchive_timeout: float = 30.0,
     on_log: Callable[[str], None] | None = None,
 ) -> SWHCheckResult | None:
     """Realise a FOD, try to unpack it, and check its directory SWHID.
@@ -58,6 +64,13 @@ def try_disarchive(
     Returns a :class:`SWHCheckResult` when the archive was successfully
     unpacked and its directory SWHID looked up, or ``None`` when the FOD could
     not be realised, is not an archive, or could not be unpacked.
+
+    The archive is unpacked and its stripped directory SWHID is checked first.
+    If that SWHID is not known to Software Heritage, the archive contents are
+    not archived and there is no point in capturing a disarchive specification,
+    so the slow ``disarchive disassemble`` step is skipped. If the stripped
+    SWHID is known but disarchive times out, the result is reported as
+    undetermined so the user knows the specification is missing.
     """
     try:
         archive_path = realise_fod(fod, nix_binary=nix_binary, on_log=on_log)
@@ -67,12 +80,8 @@ def try_disarchive(
     if not Path(archive_path).is_file():
         return None
 
-    try:
-        spec = disassemble_archive(archive_path, disarchive_binary=disarchive_binary)
-    except DisarchiveError:
-        spec = None
-
-    disarchive_swhid = _extract_disarchive_swhid(spec) if spec else None
+    if on_log:
+        on_log(f"unpacking {archive_path} to compute its directory SWHID...")
 
     try:
         unpacked_path = unpack_archive(archive_path)
@@ -88,17 +97,66 @@ def try_disarchive(
 
     try:
         stripped_swhid = compute_swhid(
-            content_path, swh_binary=swh_binary, on_log=on_log
+            content_path,
+            swh_binary=swh_binary,
+            on_log=on_log,
+            timeout=swh_identify_timeout,
         )
-    except SWHIdentifyError:
+    except SWHIdentifyError as exc:
         _cleanup(unpacked_path)
-        return None
+        if on_log:
+            on_log(f"could not compute SWHID for {content_path}: {exc}")
+        return SWHCheckResult(
+            fod=fod,
+            known=None,
+            method=SWHLookupMethod.UNSUPPORTED,
+            detail=f"unpacked {archive_path} but could not compute its SWHID: {exc}",
+        )
 
-    candidates = [swhid for swhid in (stripped_swhid, disarchive_swhid) if swhid]
-    known_map = client.lookup_known_swhids(candidates)
-    stripped_known = known_map.get(stripped_swhid, False)
-    disarchive_known = known_map.get(disarchive_swhid, False)
-    known = stripped_known or disarchive_known
+    stripped_known = client.lookup_known_swhids([stripped_swhid]).get(stripped_swhid, False)
+    if not stripped_known:
+        _cleanup(unpacked_path)
+        return SWHCheckResult(
+            fod=fod,
+            known=False,
+            method=SWHLookupMethod.KNOWN_AFTER_DISARCHIVE,
+            detail=f"unpacked {archive_path} and computed {stripped_swhid}; contents not known",
+            swhid=stripped_swhid,
+        )
+
+    # The stripped contents are known, so capture the disarchive specification
+    # that allows reconstructing the exact original archive.
+    try:
+        spec = disassemble_archive(
+            archive_path,
+            disarchive_binary=disarchive_binary,
+            timeout=disarchive_timeout,
+            on_log=on_log,
+        )
+    except DisarchiveTimeoutError as exc:
+        _cleanup(unpacked_path)
+        if on_log:
+            on_log(f"disarchive timed out for {archive_path}: {exc}")
+        return SWHCheckResult(
+            fod=fod,
+            known=None,
+            method=SWHLookupMethod.UNSUPPORTED,
+            detail=f"contents known as {stripped_swhid} but disarchive timed out before capturing the spec",
+            swhid=stripped_swhid,
+            swh_url=f"{_ARCHIVE_URL}/{stripped_swhid}",
+        )
+    except DisarchiveError:
+        # Other disarchive failures (e.g. binary missing) are not fatal: the
+        # stripped contents are still known, we just cannot reconstruct the
+        # exact original archive from a spec.
+        spec = None
+
+    disarchive_swhid = _extract_disarchive_swhid(spec) if spec else None
+    disarchive_known = (
+        client.lookup_known_swhids([disarchive_swhid]).get(disarchive_swhid, False)
+        if disarchive_swhid
+        else False
+    )
 
     _cleanup(unpacked_path)
 
@@ -106,6 +164,7 @@ def try_disarchive(
     # is the directory disarchive can rebuild from directly. Otherwise report
     # the stripped SWHID, which is more likely to be archived.
     reported_swhid = disarchive_swhid if disarchive_known else stripped_swhid
+    known = stripped_known or disarchive_known
 
     return SWHCheckResult(
         fod=fod,
@@ -134,12 +193,18 @@ def disassemble_archive(
     archive_path: str,
     *,
     disarchive_binary: str = "disarchive",
+    timeout: float = 30.0,
+    on_log: Callable[[str], None] | None = None,
 ) -> str:
     """Run GNU Guix disarchive on an archive and return its specification.
 
     The specification is an S-expression that describes the archive format
     and metadata. It can be used with ``disarchive assemble`` to recreate
     the exact same archive file from its directory contents.
+
+    A timeout is applied because ``disarchive disassemble`` can hang
+    indefinitely on some archives. When the timeout is reached the archive
+    is treated as if it could not be disassembled.
     """
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".disarchive", delete=False
@@ -148,11 +213,17 @@ def disassemble_archive(
 
     try:
         cmd = [disarchive_binary, "disassemble", archive_path, "-o", spec_path]
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        if on_log:
+            on_log(f"capturing disarchive specification for {archive_path}...")
+        subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=timeout)
         spec = Path(spec_path).read_text()
         if not spec.strip():
             raise DisarchiveError(f"disarchive produced an empty spec for {archive_path}")
         return spec
+    except subprocess.TimeoutExpired as exc:
+        raise DisarchiveTimeoutError(
+            f"disarchive disassemble timed out after {timeout}s for {archive_path}"
+        ) from exc
     except (subprocess.CalledProcessError, OSError) as exc:
         raise DisarchiveError(f"could not disassemble {archive_path}: {exc}") from exc
     finally:

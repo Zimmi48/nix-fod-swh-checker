@@ -93,6 +93,8 @@ Check every FOD reachable from `<installable>` against Software Heritage.
 - `--no-checkpoint` — do not read or write a checkpoint file.
 - `--swh-api-token` / `SWH_API_TOKEN` — authenticate to the Software Heritage API to raise rate limits.
 - `--min-delay` — minimum delay (seconds) between Software Heritage API requests (default `1.0`), to stay within the anonymous rate limit.
+- `--swh-identify-timeout` — timeout (seconds) for computing the SWHID of each realised FOD with `swh identify` (default `30.0`).
+- `--disarchive-timeout` — timeout (seconds) for capturing the `disarchive` specification of each archive (default `30.0`).
 
 ### `generate-swh-fods <installable>`
 

@@ -87,7 +87,7 @@ def test_check_fod_nar_method_builds_and_identifies(monkeypatch):
     monkeypatch.setattr(
         checker_module,
         "compute_swhid",
-        lambda path, *, swh_binary, on_log=None: swhid if path == "/nix/store/z" else None,
+        lambda path, *, swh_binary, on_log=None, timeout=None: swhid if path == "/nix/store/z" else None,
     )
 
     client = FakeSWHClient(known_swhids={swhid: True})
@@ -108,7 +108,7 @@ def test_check_fod_nar_method_unknown_swhid(monkeypatch):
         checker_module, "realise_fod", lambda fod, *, nix_binary, on_log=None: "/nix/store/z"
     )
     monkeypatch.setattr(
-        checker_module, "compute_swhid", lambda path, *, swh_binary, on_log=None: swhid
+        checker_module, "compute_swhid", lambda path, *, swh_binary, on_log=None, timeout=None: swhid
     )
 
     client = FakeSWHClient()
@@ -141,7 +141,7 @@ def test_check_fod_nar_method_identify_failure_is_undetermined(monkeypatch):
         checker_module, "realise_fod", lambda fod, *, nix_binary, on_log=None: "/nix/store/z"
     )
 
-    def fail_identify(path, *, swh_binary, on_log=None):
+    def fail_identify(path, *, swh_binary, on_log=None, timeout=None):
         raise SWHIdentifyError("boom")
 
     monkeypatch.setattr(checker_module, "compute_swhid", fail_identify)
@@ -158,7 +158,7 @@ def test_check_fod_flat_unknown_but_known_after_disarchive(monkeypatch):
     swhid = "swh:1:dir:" + "c" * 40
     client = FakeSWHClient(content_known=False)
 
-    def fake_try_disarchive(fod, client, *, nix_binary, swh_binary, on_log=None):
+    def fake_try_disarchive(fod, client, *, nix_binary, swh_binary, swh_identify_timeout=None, disarchive_timeout=None, on_log=None):
         return SWHCheckResult(
             fod=fod,
             known=True,
@@ -180,7 +180,7 @@ def test_check_fod_git_unknown_but_known_after_disarchive(monkeypatch):
     swhid = "swh:1:dir:" + "e" * 40
     client = FakeSWHClient()
 
-    def fake_try_disarchive(fod, client, *, nix_binary, swh_binary, on_log=None):
+    def fake_try_disarchive(fod, client, *, nix_binary, swh_binary, swh_identify_timeout=None, disarchive_timeout=None, on_log=None):
         return SWHCheckResult(
             fod=fod,
             known=True,

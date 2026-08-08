@@ -80,6 +80,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="minimum delay in seconds between Software Heritage API requests when unauthenticated (default: %(default)s)",
     )
     check_parser.add_argument(
+        "--swh-identify-timeout",
+        type=float,
+        default=30.0,
+        help="timeout in seconds for the 'swh identify' command on each realised FOD (default: %(default)s)",
+    )
+    check_parser.add_argument(
+        "--disarchive-timeout",
+        type=float,
+        default=30.0,
+        help="timeout in seconds for the 'disarchive disassemble' command on each archive (default: %(default)s)",
+    )
+    check_parser.add_argument(
         "--json",
         action="store_true",
         help="print machine-readable JSON instead of a human-readable report",
@@ -236,7 +248,13 @@ def _run_check_command(args: argparse.Namespace) -> int:
                 if on_log:
                     on_log(f"[{index}/{total}] checking {fod.label}")
                 try:
-                    result = check_fod(fod, client, on_log=on_log)
+                    result = check_fod(
+                        fod,
+                        client,
+                        on_log=on_log,
+                        swh_identify_timeout=args.swh_identify_timeout,
+                        disarchive_timeout=args.disarchive_timeout,
+                    )
                 except SWHError as exc:
                     print(f"warning: {exc}", file=sys.stderr)
                     continue

@@ -39,6 +39,8 @@ def check_fod(
     *,
     nix_binary: str = "nix",
     swh_binary: str = "swh",
+    swh_identify_timeout: float = 30.0,
+    disarchive_timeout: float = 30.0,
     on_log: Callable[[str], None] | None = None,
 ) -> SWHCheckResult:
     """Check a single FOD against Software Heritage, choosing the most
@@ -48,14 +50,26 @@ def check_fod(
         if on_log:
             on_log(f"{fod.label}: method=git, checking its SWHID directly")
         return _check_via_swhid(
-            fod, client, nix_binary=nix_binary, swh_binary=swh_binary, on_log=on_log
+            fod,
+            client,
+            nix_binary=nix_binary,
+            swh_binary=swh_binary,
+            swh_identify_timeout=swh_identify_timeout,
+            disarchive_timeout=disarchive_timeout,
+            on_log=on_log,
         )
 
     if fod.method == "flat" and fod.hash_algo in CONTENT_LOOKUP_ALGOS and fod.hash_hex:
         if on_log:
             on_log(f"{fod.label}: method=flat, checking its content hash directly")
         return _check_via_content_hash(
-            fod, client, nix_binary=nix_binary, swh_binary=swh_binary, on_log=on_log
+            fod,
+            client,
+            nix_binary=nix_binary,
+            swh_binary=swh_binary,
+            swh_identify_timeout=swh_identify_timeout,
+            disarchive_timeout=disarchive_timeout,
+            on_log=on_log,
         )
 
     if on_log:
@@ -64,7 +78,13 @@ def check_fod(
             "equivalent, realising it to compute its actual SWHID"
         )
     return _check_via_build_and_identify(
-        fod, client, nix_binary=nix_binary, swh_binary=swh_binary, on_log=on_log
+        fod,
+        client,
+        nix_binary=nix_binary,
+        swh_binary=swh_binary,
+        swh_identify_timeout=swh_identify_timeout,
+        disarchive_timeout=disarchive_timeout,
+        on_log=on_log,
     )
 
 
@@ -74,6 +94,8 @@ def _check_via_content_hash(
     *,
     nix_binary: str = "nix",
     swh_binary: str = "swh",
+    swh_identify_timeout: float = 30.0,
+    disarchive_timeout: float = 30.0,
     on_log: Callable[[str], None] | None = None,
 ) -> SWHCheckResult:
     result = client.lookup_content(fod.hash_algo, fod.hash_hex)
@@ -94,7 +116,13 @@ def _check_via_content_hash(
             swh_url=swh_url,
         )
     disarchive_result = try_disarchive(
-        fod, client, nix_binary=nix_binary, swh_binary=swh_binary, on_log=on_log
+        fod,
+        client,
+        nix_binary=nix_binary,
+        swh_binary=swh_binary,
+        swh_identify_timeout=swh_identify_timeout,
+        disarchive_timeout=disarchive_timeout,
+        on_log=on_log,
     )
     if disarchive_result is not None:
         return disarchive_result
@@ -112,6 +140,8 @@ def _check_via_swhid(
     *,
     nix_binary: str = "nix",
     swh_binary: str = "swh",
+    swh_identify_timeout: float = 30.0,
+    disarchive_timeout: float = 30.0,
     on_log: Callable[[str], None] | None = None,
 ) -> SWHCheckResult:
     # We don't know upfront whether the FOD output is a single file (SWH
@@ -130,7 +160,13 @@ def _check_via_swhid(
             swh_url=f"{_ARCHIVE_URL}/{swhid}",
         )
     disarchive_result = try_disarchive(
-        fod, client, nix_binary=nix_binary, swh_binary=swh_binary, on_log=on_log
+        fod,
+        client,
+        nix_binary=nix_binary,
+        swh_binary=swh_binary,
+        swh_identify_timeout=swh_identify_timeout,
+        disarchive_timeout=disarchive_timeout,
+        on_log=on_log,
     )
     if disarchive_result is not None:
         return disarchive_result
@@ -148,6 +184,8 @@ def _check_via_build_and_identify(
     *,
     nix_binary: str,
     swh_binary: str,
+    swh_identify_timeout: float = 30.0,
+    disarchive_timeout: float = 30.0,
     on_log: Callable[[str], None] | None = None,
 ) -> SWHCheckResult:
     try:
@@ -161,7 +199,12 @@ def _check_via_build_and_identify(
         )
 
     try:
-        swhid = compute_swhid(out_path, swh_binary=swh_binary, on_log=on_log)
+        swhid = compute_swhid(
+            out_path,
+            swh_binary=swh_binary,
+            on_log=on_log,
+            timeout=swh_identify_timeout,
+        )
     except SWHIdentifyError as exc:
         return SWHCheckResult(
             fod=fod,
