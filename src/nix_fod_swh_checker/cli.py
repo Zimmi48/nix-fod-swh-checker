@@ -128,6 +128,20 @@ def _result_to_dict(result: SWHCheckResult) -> dict:
     }
 
 
+def _log_to_stderr(msg: str) -> None:
+    """Print a log message to stderr.
+
+    Messages that start with a carriage return are progress updates: they
+    overwrite the current terminal line instead of starting a new one, matching
+    the behaviour of Nix's interactive progress UI.
+    """
+    if msg.startswith("\r"):
+        sys.stderr.write(msg[1:] + "\r")
+    else:
+        sys.stderr.write(msg + "\n")
+    sys.stderr.flush()
+
+
 def _print_report(results: list[SWHCheckResult]) -> None:
     if not results:
         print("nothing to report")
@@ -159,7 +173,7 @@ def _print_report(results: list[SWHCheckResult]) -> None:
 
 def _run_check_command(args: argparse.Namespace) -> int:
     api_token = args.swh_api_token or os.environ.get("SWH_API_TOKEN")
-    on_log = None if args.quiet else lambda msg: print(msg, file=sys.stderr, flush=True)
+    on_log = None if args.quiet else _log_to_stderr
 
     if not api_token and on_log:
         on_log(
