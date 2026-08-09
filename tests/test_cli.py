@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from nix_fod_swh_checker import cli
 from nix_fod_swh_checker.cli import _print_report
 from nix_fod_swh_checker.models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
@@ -110,6 +112,15 @@ def test_check_does_not_warn_when_token_is_set(monkeypatch, capsys):
 
     assert exit_code == 1
     assert "warning: no Software Heritage API token" not in err
+
+
+def test_main_without_subcommand_exits_cleanly(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main([])
+
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    assert "required: command" in err
 
 
 def test_print_report_shows_known_after_disarchive_separately(capsys):

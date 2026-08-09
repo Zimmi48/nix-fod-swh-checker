@@ -33,11 +33,13 @@ def _build_parser() -> argparse.ArgumentParser:
             "Software Heritage."
         ),
     )
-    subparsers = parser.add_subparsers(dest="command", help="available commands")
+    subparsers = parser.add_subparsers(
+        dest="command", help="available commands", required=True
+    )
 
     check_parser = subparsers.add_parser(
         "check",
-        help="check FODs against Software Heritage (default)",
+        help="check FODs against Software Heritage",
     )
     check_parser.add_argument(
         "installable",
