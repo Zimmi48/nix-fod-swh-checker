@@ -83,7 +83,7 @@ nix run .#nix-fod-swh-check -- build-swh-fods nixpkgs#hello
 
 The generated expression handles three cases:
 
-- **Single files** (`method=flat` or `method=git` known as `swh:1:cnt:...`): download the raw bytes from the SWH `/content/` API.
+- **Single files** (`method=flat`, `method=git`, or `method=nar` known as `swh:1:cnt:...`): download the raw bytes from the SWH `/content/` API, preserving the original FOD's output hash mode so the resulting store path matches.
 - **Directories** (`method=nar` or `method=git` known as `swh:1:dir:...`): download the SWH vault `flat` bundle (a tarball of the directory) and extract it.
 - **Archives known after disarchive**: for archives whose raw bytes are not in SWH but whose unpacked contents are, the tool captures a [GNU Guix `disarchive`](https://ngyro.com/software/disarchive.html) specification while checking. The generated derivation downloads the directory from SWH, reconstructs the exact original archive with `disarchive assemble`, and verifies it against the original flat hash.
 

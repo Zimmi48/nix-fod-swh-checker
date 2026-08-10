@@ -125,6 +125,27 @@ def test_iter_fixed_output_derivations_falls_back_to_output_hash_mode():
     assert recursive_fod.method == "nar"
 
 
+def test_iter_fixed_output_derivations_ignores_non_derivation_metadata():
+    derivations = {
+        "version": 3,
+        "/nix/store/fod.drv": {
+            "name": "fod",
+            "env": {},
+            "outputs": {
+                "out": {
+                    "path": "/nix/store/fod-out",
+                    "hashAlgo": "sha256",
+                    "hash": "cc" * 32,
+                }
+            },
+        },
+    }
+
+    (fod,) = list(iter_fixed_output_derivations(derivations))
+    assert fod.drv_path == "/nix/store/fod.drv"
+    assert fod.hash_hex == "cc" * 32
+
+
 def test_show_derivations_recursive_parses_json(monkeypatch):
     def fake_run(cmd, check, capture_output, text):
         assert cmd[:4] == ["nix", "derivation", "show", "--recursive"]
@@ -133,6 +154,126 @@ def test_show_derivations_recursive_parses_json(monkeypatch):
     monkeypatch.setattr(subprocess, "run", fake_run)
     result = show_derivations_recursive("nixpkgs#hello")
     assert result == SAMPLE_DERIVATIONS
+
+
+def test_show_derivations_recursive_unwraps_derivations_key(monkeypatch):
+    payload = {"version": 3, "derivations": SAMPLE_DERIVATIONS}
+
+    def fake_run(cmd, check, capture_output, text):
+        assert cmd[:4] == ["nix", "derivation", "show", "--recursive"]
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(payload), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = show_derivations_recursive("nixpkgs#hello")
+    assert result == SAMPLE_DERIVATIONS
+
+
+def test_show_derivations_recursive_rejects_malformed_derivations_key(monkeypatch):
+    payload = {"version": 3, "derivations": []}
+
+    def fake_run(cmd, check, capture_output, text):
+        assert cmd[:4] == ["nix", "derivation", "show", "--recursive"]
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(payload), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(NixCommandError, match="'derivations' is not an object"):
+        show_derivations_recursive("nixpkgs#hello")
+
+
+def test_show_derivations_recursive_rejects_non_object_payload(monkeypatch):
+    def fake_run(cmd, check, capture_output, text):
+        assert cmd[:4] == ["nix", "derivation", "show", "--recursive"]
+        return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(NixCommandError, match="top-level value is not an object"):
+        show_derivations_recursive("nixpkgs#hello")
+
+
+def test_show_derivations_recursive_rejects_flat_payload_without_drv_entries(monkeypatch):
+    payload = {"version": 3}
+
+    def fake_run(cmd, check, capture_output, text):
+        assert cmd[:4] == ["nix", "derivation", "show", "--recursive"]
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(payload), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(NixCommandError, match="no derivation entries found"):
+        show_derivations_recursive("nixpkgs#hello")
+
+
+def test_show_derivations_recursive_normalizes_basename_drv_keys(monkeypatch):
+    payload = {
+        "version": 3,
+        "derivations": {
+            "013mqc5ymx4cih72blz21l6ync49i3jg-expr-strcmp.patch.drv": {
+                "name": "expr-strcmp.patch",
+                "env": {},
+                "outputs": {},
+            }
+        },
+    }
+
+    def fake_run(cmd, check, capture_output, text):
+        assert cmd[:4] == ["nix", "derivation", "show", "--recursive"]
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(payload), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = show_derivations_recursive("nixpkgs#hello")
+    assert result == {
+        "/nix/store/013mqc5ymx4cih72blz21l6ync49i3jg-expr-strcmp.patch.drv": {
+            "name": "expr-strcmp.patch",
+            "env": {},
+            "outputs": {},
+        }
+    }
+
+
+def test_iter_fixed_output_derivations_accepts_basename_drv_keys():
+    derivations = {
+        "version": 3,
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-real.drv": {
+            "name": "real",
+            "env": {},
+            "outputs": {
+                "out": {
+                    "path": "/nix/store/real-out",
+                    "hashAlgo": "sha256",
+                    "hash": "bb" * 32,
+                }
+            },
+        },
+    }
+
+    (fod,) = list(iter_fixed_output_derivations(derivations))
+    assert fod.drv_path == "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-real.drv"
+    assert fod.hash_hex == "bb" * 32
+
+
+def test_iter_fixed_output_derivations_skips_non_drv_keys():
+    derivations = {
+        "version": 3,
+        "/nix/store/some-source.tar.gz": {
+            "name": "some-source.tar.gz",
+            "env": {},
+            "outputs": {},
+        },
+        "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-real.drv": {
+            "name": "real",
+            "env": {},
+            "outputs": {
+                "out": {
+                    "path": "/nix/store/real-out",
+                    "hashAlgo": "sha256",
+                    "hash": "bb" * 32,
+                }
+            },
+        },
+    }
+
+    (fod,) = list(iter_fixed_output_derivations(derivations))
+    assert fod.drv_path == "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-real.drv"
+    assert fod.hash_hex == "bb" * 32
 
 
 def test_show_derivations_recursive_missing_binary(monkeypatch):

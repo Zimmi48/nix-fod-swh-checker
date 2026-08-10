@@ -64,8 +64,45 @@ def test_content_swhid_expression():
     expr = swh_fod_expression(result)
     assert isinstance(expr, SWHFodExpression)
     assert "builtin:fetchurl" in expr.nix_code
-    assert "outputHashMode = \"flat\"" in expr.nix_code
+    assert "outputHashMode = \"git\"" in expr.nix_code
     assert "archive.softwareheritage.org/api/1/content/sha1_git:" + "b" * 40 in expr.nix_code
+
+
+def test_content_swhid_expression_uses_recursive_mode_for_nar_fod():
+    """A content SWHID found for a nar-hashed FOD must use recursive hashing."""
+    result = make_result(
+        fod=make_fod(method="nar", hash_algo="sha256", hash_hex="a" * 64),
+        method=SWHLookupMethod.BUILD_AND_IDENTIFY,
+        swhid="swh:1:cnt:" + "b" * 40,
+    )
+    expr = swh_fod_expression(result)
+    assert isinstance(expr, SWHFodExpression)
+    assert "builtin:fetchurl" in expr.nix_code
+    assert "outputHashMode = \"recursive\"" in expr.nix_code
+    assert "archive.softwareheritage.org/api/1/content/sha1_git:" + "b" * 40 in expr.nix_code
+
+
+def test_content_swhid_expression_skips_unknown_method():
+    """Content SWHIDs for methods we cannot map to outputHashMode are skipped."""
+    result = make_result(
+        fod=make_fod(method="text", hash_algo="sha256", hash_hex="a" * 64),
+        method=SWHLookupMethod.SWHID_KNOWN,
+        swhid="swh:1:cnt:" + "b" * 40,
+    )
+    assert swh_fod_expression(result) is None
+
+
+def test_content_swhid_expression_infers_algo_from_sri_hash():
+    """Newer Nix omits ``hashAlgo``; the algo must be inferred from the SRI hash."""
+    result = make_result(
+        fod=make_fod(method="flat", hash_algo=None, hash_hex="sha256-SaVxnA"),
+        method=SWHLookupMethod.BUILD_AND_IDENTIFY,
+        swhid="swh:1:cnt:" + "b" * 40,
+    )
+    expr = swh_fod_expression(result)
+    assert isinstance(expr, SWHFodExpression)
+    assert "outputHashAlgo = \"sha256\"" in expr.nix_code
+    assert "outputHash = \"sha256-SaVxnA\"" in expr.nix_code
 
 
 def test_directory_swhid_expression():
@@ -82,6 +119,19 @@ def test_directory_swhid_expression():
     assert f"vault/flat/{swhid}/raw" in expr.nix_code
     assert "curl -L -f -o tmp/bundle.tar.bz2" in expr.nix_code
     assert "tar -xjf tmp/bundle.tar.bz2" in expr.nix_code
+
+
+def test_directory_swhid_expression_infers_algo_from_sri_hash():
+    swhid = "swh:1:dir:" + "b" * 40
+    result = make_result(
+        fod=make_fod(method="nar", hash_algo=None, hash_hex="sha256-SaVxnA"),
+        method=SWHLookupMethod.SWHID_KNOWN,
+        swhid=swhid,
+    )
+    expr = swh_fod_expression(result)
+    assert isinstance(expr, SWHFodExpression)
+    assert "outputHashAlgo = \"sha256\"" in expr.nix_code
+    assert "outputHash = \"sha256-SaVxnA\"" in expr.nix_code
 
 
 def test_build_and_identify_directory_expression():
@@ -190,6 +240,34 @@ def test_swh_fods_expression():
     assert '"a" = builtins.fetchurl' in code
     assert '"b" = builtins.fetchurl' in code
     assert "github.com/NixOS/nixpkgs/archive/" in code
+
+
+def test_swh_fods_expression_sanitizes_drv_labels():
+    """Labels from `.drv` paths must become valid Nix attribute names."""
+    exprs = [
+        SWHFodExpression(
+            label="/nix/store/013mqc5ymx4cih72blz21l6ync49i3jg-expr-strcmp.patch.drv",
+            nix_code="builtins.fetchurl { url = \"u\"; name = \"a\"; }",
+        ),
+        SWHFodExpression(
+            label="1starts-with-digit.drv",
+            nix_code="builtins.fetchurl { url = \"u\"; name = \"b\"; }",
+        ),
+    ]
+    code = swh_fods_expression(exprs)
+    assert '"nix_store_013mqc5ymx4cih72blz21l6ync49i3jg_expr_strcmp_patch_drv" =' in code
+    assert '"attr_1starts_with_digit_drv" =' in code
+
+
+def test_swh_fods_expression_deduplicates_colliding_labels():
+    """Sanitized labels that collide get unique suffixes."""
+    exprs = [
+        SWHFodExpression(label="a.b", nix_code="builtins.fetchurl { url = \"u\"; name = \"a\"; }"),
+        SWHFodExpression(label="a_b", nix_code="builtins.fetchurl { url = \"u\"; name = \"b\"; }"),
+    ]
+    code = swh_fods_expression(exprs)
+    assert '"a_b" =' in code
+    assert '"a_b_1" =' in code
 
 
 def test_write_swh_fods_nix(tmp_path):

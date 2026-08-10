@@ -98,6 +98,18 @@ def swh_fod_expression(result: SWHCheckResult) -> SWHFodExpression | None:
     return None
 
 
+# Map from the `method` field reported by `nix derivation show` to the
+# corresponding Nix `outputHashMode`.  A content SWHID always refers to raw
+# file bytes, but the original FOD may have hashed those bytes in different
+# ways; the generated derivation must use the same mode or the output hash
+# will not match.
+_FOD_METHOD_TO_OUTPUT_HASH_MODE = {
+    "flat": "flat",
+    "nar": "recursive",
+    "git": "git",
+}
+
+
 def _content_hash_expression(result: SWHCheckResult) -> SWHFodExpression | None:
     fod = result.fod
     if not fod.hash_algo or not fod.hash_hex:
@@ -110,6 +122,7 @@ def _content_hash_expression(result: SWHCheckResult) -> SWHFodExpression | None:
             hash_algo=fod.hash_algo,
             hash_hex=fod.hash_hex,
             url=url,
+            output_hash_mode="flat",
         ),
     )
 
@@ -129,9 +142,12 @@ def _swhid_expression(result: SWHCheckResult) -> SWHFodExpression | None:
 
 def _content_swhid_expression(result: SWHCheckResult) -> SWHFodExpression | None:
     fod = result.fod
+    output_hash_mode = _FOD_METHOD_TO_OUTPUT_HASH_MODE.get(fod.method or "flat")
+    if output_hash_mode is None:
+        return None
     sha1_git = result.swhid.removeprefix("swh:1:cnt:")
     url = f"{_SWH_API_URL}/content/sha1_git:{sha1_git}/raw/"
-    hash_algo = fod.hash_algo or "sha1"
+    hash_algo = fod.hash_algo or _algo_from_hash(fod.hash_hex) or "sha1"
     hash_hex = fod.hash_hex or sha1_git
     return SWHFodExpression(
         label=fod.label,
@@ -140,19 +156,21 @@ def _content_swhid_expression(result: SWHCheckResult) -> SWHFodExpression | None
             hash_algo=hash_algo,
             hash_hex=hash_hex,
             url=url,
+            output_hash_mode=output_hash_mode,
         ),
     )
 
 
 def _directory_swhid_expression(result: SWHCheckResult) -> SWHFodExpression | None:
     fod = result.fod
-    if not fod.hash_algo or not fod.hash_hex:
+    hash_algo = fod.hash_algo or _algo_from_hash(fod.hash_hex)
+    if not hash_algo or not fod.hash_hex:
         return None
     return SWHFodExpression(
         label=fod.label,
         nix_code=_directory_fod_derivation(
             name=_safe_name(fod.name),
-            hash_algo=fod.hash_algo,
+            hash_algo=hash_algo,
             hash_hex=fod.hash_hex,
             swhid=result.swhid,
         ),
@@ -161,7 +179,8 @@ def _directory_swhid_expression(result: SWHCheckResult) -> SWHFodExpression | No
 
 def _disarchive_expression(result: SWHCheckResult) -> SWHFodExpression | None:
     fod = result.fod
-    if not fod.hash_algo or not fod.hash_hex:
+    hash_algo = fod.hash_algo or _algo_from_hash(fod.hash_hex)
+    if not hash_algo or not fod.hash_hex:
         return None
     if not result.disarchive_spec:
         return None
@@ -175,7 +194,7 @@ def _disarchive_expression(result: SWHCheckResult) -> SWHFodExpression | None:
             label=fod.label,
             nix_code=_disarchive_fod_derivation(
                 name=_safe_name(fod.name),
-                hash_algo=fod.hash_algo,
+                hash_algo=hash_algo,
                 hash_hex=fod.hash_hex,
                 swhid=result.disarchive_swhid,
                 spec=result.disarchive_spec,
@@ -191,7 +210,7 @@ def _disarchive_expression(result: SWHCheckResult) -> SWHFodExpression | None:
             label=fod.label,
             nix_code=_disarchive_wrapped_fod_derivation(
                 name=_safe_name(fod.name),
-                hash_algo=fod.hash_algo,
+                hash_algo=hash_algo,
                 hash_hex=fod.hash_hex,
                 stripped_swhid=result.swhid,
                 top_dir=result.disarchive_top_dir,
@@ -208,12 +227,13 @@ def _flat_fod_derivation(
     hash_algo: str,
     hash_hex: str,
     url: str,
+    output_hash_mode: str,
 ) -> str:
     return f"""builtins.derivation {{
   name = {nix_quote(name)};
   system = builtins.currentSystem;
   builder = "builtin:fetchurl";
-  outputHashMode = "flat";
+  outputHashMode = {nix_quote(output_hash_mode)};
   outputHashAlgo = {nix_quote(hash_algo)};
   outputHash = {nix_quote(hash_hex)};
   url = {nix_quote(url)};
@@ -311,10 +331,54 @@ pkgs.stdenv.mkDerivation {{
 """
 
 
+def _algo_from_hash(hash_value: str | None) -> str | None:
+    """Return the algorithm prefix of an SRI hash, if any.
+
+    Nix SRI hashes have the form ``<algo>-<base64>``. Newer ``nix derivation
+    show`` does not populate the per-output ``hashAlgo`` field, so we infer
+    the algorithm directly from the hash string when needed.
+    """
+    if not hash_value:
+        return None
+    if ":" in hash_value:
+        return None
+    if "-" not in hash_value:
+        return None
+    algo, _, rest = hash_value.partition("-")
+    if not algo or not rest:
+        return None
+    return algo
+
+
 def _safe_name(name: str) -> str:
     """Return a Nix-safe derivation name."""
     safe = "".join(c if c.isalnum() or c in "-_+." else "_" for c in name)
     return safe or "swh-backed-fod"
+
+
+def _safe_attr_name(name: str) -> str:
+    """Return a Nix-safe attribute name from a user-facing label.
+
+    Attribute names may not contain `.` or `-` and must not start with a digit,
+    so this function replaces unsafe characters with underscores, collapses
+    consecutive underscores, and prefixes a leading digit (or an entirely
+    numeric name) with ``attr_``.
+    """
+    safe = "".join(c if c.isalnum() or c == "_" else "_" for c in name)
+    # Collapse consecutive underscores so the transformed label is shorter and
+    # deterministic regardless of how many non-alphanumeric characters were
+    # adjacent in the original label.
+    import re
+
+    safe = re.sub(r"_+", "_", safe)
+    if not safe:
+        return "swh_backed_fod"
+    safe = safe.strip("_")
+    if not safe:
+        return "swh_backed_fod"
+    if safe[0].isdigit() or safe.isdigit():
+        safe = "attr_" + safe
+    return safe
 
 
 def nix_quote(s: str) -> str:
@@ -341,9 +405,18 @@ def swh_fods_expression(
     """
     del name  # kept for backward compatibility
     entries = []
+    seen: set[str] = set()
     for expr in expressions:
-        safe_name = _safe_name(expr.label)
-        entries.append(f"  {nix_quote(safe_name)} = {expr.nix_code.rstrip()};")
+        attr_name = _safe_attr_name(expr.label)
+        # Labels can collide once sanitized (e.g. "a.b" and "a_b"). Keep the
+        # first occurrence and suffix duplicates with a counter.
+        if attr_name in seen:
+            counter = 1
+            while f"{attr_name}_{counter}" in seen:
+                counter += 1
+            attr_name = f"{attr_name}_{counter}"
+        seen.add(attr_name)
+        entries.append(f"  {nix_quote(attr_name)} = {expr.nix_code.rstrip()};")
     entries_str = "\n".join(entries)
     return f"""{{ pkgs ? import (builtins.fetchTarball {{
   url = {nix_quote(_DEFAULT_NIXPKGS_URL)};

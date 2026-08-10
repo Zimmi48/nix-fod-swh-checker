@@ -12,7 +12,7 @@ from pathlib import Path
 
 from .checker import check_fod
 from .checkpoint import default_checkpoint_path, load_checkpoint, save_checkpoint
-from .models import SWHCheckResult, SWHLookupMethod
+from .models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
 from .nix import (
     NixCommandError,
     build_nix_file,
@@ -72,6 +72,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--checkpoint-file",
         default=None,
         help="checkpoint to read results from (default: a per-installable file under $XDG_CACHE_HOME/nix-fod-swh-checker/)",
+    )
+    generate_parser.add_argument(
+        "--json-input",
+        "-i",
+        default=None,
+        help="path to a JSON file containing check results (as produced by 'check --json')",
     )
 
     cook_parser = subparsers.add_parser(
@@ -379,21 +385,35 @@ def _run_check_command(args: argparse.Namespace) -> int:
 
 
 def _run_generate_command(args: argparse.Namespace) -> int:
-    checkpoint_path = (
-        Path(args.checkpoint_file)
-        if args.checkpoint_file
-        else default_checkpoint_path(args.installable)
-    )
-    checked = load_checkpoint(checkpoint_path)
-    if not checked:
-        print(
-            f"error: no checkpoint found at {checkpoint_path}; "
-            "run 'nix-fod-swh-check check <installable>' first",
-            file=sys.stderr,
+    if args.json_input:
+        try:
+            results = _load_results_from_json(Path(args.json_input))
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(f"error: could not read JSON results from {args.json_input}: {exc}", file=sys.stderr)
+            return 1
+        if not results:
+            print(
+                f"error: no check results found in {args.json_input}; "
+                "run 'nix-fod-swh-check check <installable> --json' first",
+                file=sys.stderr,
+            )
+            return 1
+    else:
+        checkpoint_path = (
+            Path(args.checkpoint_file)
+            if args.checkpoint_file
+            else default_checkpoint_path(args.installable)
         )
-        return 1
+        checked = load_checkpoint(checkpoint_path)
+        if not checked:
+            print(
+                f"error: no checkpoint found at {checkpoint_path}; "
+                "run 'nix-fod-swh-check check <installable>' first",
+                file=sys.stderr,
+            )
+            return 1
+        results = list(checked.values())
 
-    results = list(checked.values())
     try:
         expressions = write_swh_fods_nix(args.output, results)
     except UnsupportedSWHFodError as exc:
@@ -405,6 +425,42 @@ def _run_generate_command(args: argparse.Namespace) -> int:
         file=sys.stderr,
     )
     return 0
+
+
+def _load_results_from_json(path: Path) -> list[SWHCheckResult]:
+    """Load check results from the JSON format printed by `check --json`."""
+    raw_list = json.loads(path.read_text())
+    if not isinstance(raw_list, list):
+        raise ValueError("top-level value is not a list")
+    results: list[SWHCheckResult] = []
+    for raw in raw_list:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            fod_data = dict(raw["fod"])
+            # ``label`` is a computed property on ``FixedOutputDerivation`` and
+            # is included in JSON output for convenience; drop it here so the
+            # dataclass constructor does not complain about an unexpected field.
+            fod_data.pop("label", None)
+            fod = FixedOutputDerivation(**fod_data)
+            results.append(
+                SWHCheckResult(
+                    fod=fod,
+                    known=raw["known"],
+                    method=SWHLookupMethod(raw["method"]),
+                    detail=raw["detail"],
+                    swhid=raw.get("swhid"),
+                    swh_url=raw.get("swh_url"),
+                    disarchive_spec=raw.get("disarchive_spec"),
+                    disarchive_swhid=raw.get("disarchive_swhid"),
+                    disarchive_top_dir=raw.get("disarchive_top_dir"),
+                )
+            )
+        except KeyError as exc:
+            raise ValueError(f"missing required field {exc.args[0]!r}") from exc
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"invalid result entry: {exc}") from exc
+    return results
 
 
 def _is_nix_file(path: str) -> bool:

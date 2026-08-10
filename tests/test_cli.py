@@ -3,7 +3,7 @@ import json
 import pytest
 
 from nix_fod_swh_checker import cli
-from nix_fod_swh_checker.cli import _print_report
+from nix_fod_swh_checker.cli import _print_report, _result_to_dict
 from nix_fod_swh_checker.models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
 
 
@@ -500,6 +500,39 @@ def test_build_swh_fods_fails_when_vault_not_cooked(monkeypatch, capsys, tmp_pat
     assert "not cooked" in err
     assert "cook-swh-fods" in err
     assert built == []
+
+
+def test_generate_swh_fods_round_trips_json_input_with_label(monkeypatch, tmp_path):
+    """``generate-swh-fods -i`` must tolerate the redundant ``label`` field emitted by ``check --json``."""
+    result = SWHCheckResult(
+        fod=_fod("a"),
+        known=True,
+        method=SWHLookupMethod.CONTENT_HASH,
+        detail="known",
+        swhid="swh:1:cnt:" + "b" * 40,
+    )
+    results_json = tmp_path / "results.json"
+    results_json.write_text(json.dumps([_result_to_dict(result)]))
+
+    written = []
+
+    def fake_write_swh_fods_nix(path, results):
+        written.append((path, results))
+        return []
+
+    monkeypatch.setattr(cli, "write_swh_fods_nix", fake_write_swh_fods_nix)
+
+    output = tmp_path / "swh-backed-fods.nix"
+    exit_code = cli.main(
+        ["generate-swh-fods", "nixpkgs#hello", "-i", str(results_json), "-o", str(output)]
+    )
+
+    assert exit_code == 0
+    assert len(written) == 1
+    assert written[0][0] == str(output)
+    reloaded = written[0][1]
+    assert len(reloaded) == 1
+    assert reloaded[0].fod == result.fod
 
 
 def test_build_swh_fods_passes_no_substitute(monkeypatch, capsys, tmp_path):
