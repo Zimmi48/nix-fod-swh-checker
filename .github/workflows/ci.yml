@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   test:
@@ -21,3 +22,26 @@ jobs:
 
       - name: Run flake checks
         run: nix flake check
+
+  integration:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v13
+        with:
+          extra-conf: |
+            accept-flake-config = true
+
+      - name: Run a live SWH API smoke test
+        env:
+          SWH_API_TOKEN: ${{ secrets.SWH_API_TOKEN }}
+        run: |
+          nix run .#nix-fod-swh-check -- check nixpkgs#hello \
+            --no-checkpoint \
+            --swh-api-token "$SWH_API_TOKEN" \
+            --swh-identify-timeout 10 \
+            --disarchive-timeout 10
