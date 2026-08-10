@@ -44,9 +44,19 @@ def show_derivations_recursive(
         )
     proc = _run_nix(cmd, nix_binary)
     try:
-        return json.loads(proc.stdout)
+        return _parse_derivations_json(proc.stdout)
     except json.JSONDecodeError as exc:
         raise NixCommandError(f"could not parse JSON output of '{' '.join(cmd)}'") from exc
+
+
+def _parse_derivations_json(stdout: str) -> dict[str, dict]:
+    payload = json.loads(stdout)
+    if isinstance(payload, dict):
+        derivations = payload.get("derivations")
+        if isinstance(derivations, dict):
+            return derivations
+        return payload
+    return {}
 
 
 def dry_run_nix_file(

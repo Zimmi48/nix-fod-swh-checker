@@ -156,6 +156,18 @@ def test_show_derivations_recursive_parses_json(monkeypatch):
     assert result == SAMPLE_DERIVATIONS
 
 
+def test_show_derivations_recursive_unwraps_derivations_key(monkeypatch):
+    payload = {"version": 3, "derivations": SAMPLE_DERIVATIONS}
+
+    def fake_run(cmd, check, capture_output, text):
+        assert cmd[:4] == ["nix", "derivation", "show", "--recursive"]
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(payload), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = show_derivations_recursive("nixpkgs#hello")
+    assert result == SAMPLE_DERIVATIONS
+
+
 def test_show_derivations_recursive_missing_binary(monkeypatch):
     def fake_run(cmd, check, capture_output, text):
         raise FileNotFoundError()
