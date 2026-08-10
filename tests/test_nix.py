@@ -202,6 +202,57 @@ def test_show_derivations_recursive_rejects_flat_payload_without_drv_entries(mon
         show_derivations_recursive("nixpkgs#hello")
 
 
+def test_show_derivations_recursive_rejects_wrapped_payload_without_store_path_drv_entries(
+    monkeypatch,
+):
+    payload = {
+        "version": 3,
+        "derivations": {
+            "expr-strcmp.patch.drv": {"name": "expr-strcmp.patch", "env": {}, "outputs": {}}
+        },
+    }
+
+    def fake_run(cmd, check, capture_output, text):
+        assert cmd[:4] == ["nix", "derivation", "show", "--recursive"]
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(payload), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(NixCommandError, match="no derivation entries found"):
+        show_derivations_recursive("nixpkgs#hello")
+
+
+def test_iter_fixed_output_derivations_skips_non_store_path_keys():
+    derivations = {
+        "version": 3,
+        "expr-strcmp.patch.drv": {
+            "name": "expr-strcmp.patch",
+            "env": {"outputHashMode": "flat"},
+            "outputs": {
+                "out": {
+                    "path": "/nix/store/x",
+                    "hashAlgo": "sha256",
+                    "hash": "aa" * 32,
+                }
+            },
+        },
+        "/nix/store/real.drv": {
+            "name": "real",
+            "env": {},
+            "outputs": {
+                "out": {
+                    "path": "/nix/store/real-out",
+                    "hashAlgo": "sha256",
+                    "hash": "bb" * 32,
+                }
+            },
+        },
+    }
+
+    (fod,) = list(iter_fixed_output_derivations(derivations))
+    assert fod.drv_path == "/nix/store/real.drv"
+    assert fod.hash_hex == "bb" * 32
+
+
 def test_show_derivations_recursive_missing_binary(monkeypatch):
     def fake_run(cmd, check, capture_output, text):
         raise FileNotFoundError()

@@ -51,16 +51,23 @@ def show_derivations_recursive(
 
 def _parse_derivations_json(stdout: str) -> dict[str, dict]:
     payload = json.loads(stdout)
-    if isinstance(payload, dict):
-        if "derivations" in payload:
-            derivations = payload["derivations"]
-            if isinstance(derivations, dict):
-                return derivations
+    if not isinstance(payload, dict):
+        raise NixCommandError("could not parse derivations JSON: top-level value is not an object")
+    if "derivations" in payload:
+        derivations = payload["derivations"]
+        if not isinstance(derivations, dict):
             raise NixCommandError("could not parse wrapped derivations JSON: 'derivations' is not an object")
-        if any(key.endswith(".drv") for key in payload):
-            return payload
-        raise NixCommandError("could not parse derivations JSON: no derivation entries found")
-    raise NixCommandError("could not parse derivations JSON: top-level value is not an object")
+        if not any(_is_drv_store_path(key) for key in derivations):
+            raise NixCommandError("could not parse derivations JSON: no derivation entries found")
+        return derivations
+    if any(_is_drv_store_path(key) for key in payload):
+        return payload
+    raise NixCommandError("could not parse derivations JSON: no derivation entries found")
+
+
+def _is_drv_store_path(key: str) -> bool:
+    """Return True when ``key`` looks like a `/nix/store/*.drv` path."""
+    return isinstance(key, str) and key.startswith("/nix/store/") and key.endswith(".drv")
 
 
 def dry_run_nix_file(
@@ -362,6 +369,8 @@ def iter_fixed_output_derivations(
     variable (`"flat"` or `"recursive"`), so that's used as a fallback.
     """
     for drv_path, drv in derivations.items():
+        if not _is_drv_store_path(drv_path):
+            continue
         if not isinstance(drv, dict):
             continue
         outputs = drv.get("outputs", {}) or {}

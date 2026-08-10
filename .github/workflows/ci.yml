@@ -36,7 +36,7 @@ jobs:
           extra-conf: |
             accept-flake-config = true
 
-      - name: Run a live SWH API smoke test
+      - name: Check FODs against Software Heritage
         env:
           SWH_API_TOKEN: ${{ secrets.SWH_API_TOKEN }}
         run: |
@@ -45,9 +45,20 @@ jobs:
             --swh-api-token "$SWH_API_TOKEN" \
             --swh-identify-timeout 10 \
             --disarchive-timeout 10
+
+      - name: Generate SWH-backed FODs expression
+        run: |
           nix run .#nix-fod-swh-check -- generate-swh-fods nixpkgs#hello \
             -o swh-backed-fods.nix
+
+      - name: Request cooking of SWH vault flat archives
+        env:
+          SWH_API_TOKEN: ${{ secrets.SWH_API_TOKEN }}
+        run: |
           nix run .#nix-fod-swh-check -- cook-swh-fods nixpkgs#hello
+
+      - name: Build SWH-backed FODs (expected to fail if not cooked)
+        run: |
           set +e
           output=$(nix run .#nix-fod-swh-check -- build-swh-fods swh-backed-fods.nix \
             --no-substitute 2>&1)
