@@ -218,6 +218,34 @@ def test_swh_fods_expression():
     assert "github.com/NixOS/nixpkgs/archive/" in code
 
 
+def test_swh_fods_expression_sanitizes_drv_labels():
+    """Labels from `.drv` paths must become valid Nix attribute names."""
+    exprs = [
+        SWHFodExpression(
+            label="/nix/store/013mqc5ymx4cih72blz21l6ync49i3jg-expr-strcmp.patch.drv",
+            nix_code="builtins.fetchurl { url = \"u\"; name = \"a\"; }",
+        ),
+        SWHFodExpression(
+            label="1starts-with-digit.drv",
+            nix_code="builtins.fetchurl { url = \"u\"; name = \"b\"; }",
+        ),
+    ]
+    code = swh_fods_expression(exprs)
+    assert '"_nix_store_013mqc5ymx4cih72blz21l6ync49i3jg-expr-strcmp_patch_drv" =' in code
+    assert '"attr_1starts_with_digit_drv" =' in code
+
+
+def test_swh_fods_expression_deduplicates_colliding_labels():
+    """Sanitized labels that collide get unique suffixes."""
+    exprs = [
+        SWHFodExpression(label="a.b", nix_code="builtins.fetchurl { url = \"u\"; name = \"a\"; }"),
+        SWHFodExpression(label="a_b", nix_code="builtins.fetchurl { url = \"u\"; name = \"b\"; }"),
+    ]
+    code = swh_fods_expression(exprs)
+    assert '"a_b" =' in code
+    assert '"a_b_1" =' in code
+
+
 def test_write_swh_fods_nix(tmp_path):
     results = [
         make_result(

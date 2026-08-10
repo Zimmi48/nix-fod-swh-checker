@@ -338,6 +338,21 @@ def _safe_name(name: str) -> str:
     return safe or "swh-backed-fod"
 
 
+def _safe_attr_name(name: str) -> str:
+    """Return a Nix-safe attribute name from a user-facing label.
+
+    Attribute names may not contain `.` and must not start with a digit, so
+    this function replaces unsafe characters with underscores and prefixes a
+    leading digit (or an entirely numeric name) with ``attr_``.
+    """
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
+    if not safe:
+        return "swh_backed_fod"
+    if safe[0].isdigit() or safe.isdigit():
+        safe = "attr_" + safe
+    return safe
+
+
 def nix_quote(s: str) -> str:
     """Return a Nix double-quoted string literal for ``s``."""
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("${", "\\${") + '"'
@@ -362,9 +377,18 @@ def swh_fods_expression(
     """
     del name  # kept for backward compatibility
     entries = []
+    seen: set[str] = set()
     for expr in expressions:
-        safe_name = _safe_name(expr.label)
-        entries.append(f"  {nix_quote(safe_name)} = {expr.nix_code.rstrip()};")
+        attr_name = _safe_attr_name(expr.label)
+        # Labels can collide once sanitized (e.g. "a.b" and "a_b"). Keep the
+        # first occurrence and suffix duplicates with a counter.
+        if attr_name in seen:
+            counter = 1
+            while f"{attr_name}_{counter}" in seen:
+                counter += 1
+            attr_name = f"{attr_name}_{counter}"
+        seen.add(attr_name)
+        entries.append(f"  {nix_quote(attr_name)} = {expr.nix_code.rstrip()};")
     entries_str = "\n".join(entries)
     return f"""{{ pkgs ? import (builtins.fetchTarball {{
   url = {nix_quote(_DEFAULT_NIXPKGS_URL)};
