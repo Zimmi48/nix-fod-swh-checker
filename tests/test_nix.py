@@ -202,13 +202,15 @@ def test_show_derivations_recursive_rejects_flat_payload_without_drv_entries(mon
         show_derivations_recursive("nixpkgs#hello")
 
 
-def test_show_derivations_recursive_rejects_wrapped_payload_without_store_path_drv_entries(
-    monkeypatch,
-):
+def test_show_derivations_recursive_normalizes_basename_drv_keys(monkeypatch):
     payload = {
         "version": 3,
         "derivations": {
-            "expr-strcmp.patch.drv": {"name": "expr-strcmp.patch", "env": {}, "outputs": {}}
+            "013mqc5ymx4cih72blz21l6ync49i3jg-expr-strcmp.patch.drv": {
+                "name": "expr-strcmp.patch",
+                "env": {},
+                "outputs": {},
+            }
         },
     }
 
@@ -217,23 +219,44 @@ def test_show_derivations_recursive_rejects_wrapped_payload_without_store_path_d
         return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(payload), stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    with pytest.raises(NixCommandError, match="no derivation entries found"):
-        show_derivations_recursive("nixpkgs#hello")
+    result = show_derivations_recursive("nixpkgs#hello")
+    assert result == {
+        "/nix/store/013mqc5ymx4cih72blz21l6ync49i3jg-expr-strcmp.patch.drv": {
+            "name": "expr-strcmp.patch",
+            "env": {},
+            "outputs": {},
+        }
+    }
 
 
-def test_iter_fixed_output_derivations_skips_non_store_path_keys():
+def test_iter_fixed_output_derivations_accepts_basename_drv_keys():
     derivations = {
         "version": 3,
-        "expr-strcmp.patch.drv": {
-            "name": "expr-strcmp.patch",
-            "env": {"outputHashMode": "flat"},
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-real.drv": {
+            "name": "real",
+            "env": {},
             "outputs": {
                 "out": {
-                    "path": "/nix/store/x",
+                    "path": "/nix/store/real-out",
                     "hashAlgo": "sha256",
-                    "hash": "aa" * 32,
+                    "hash": "bb" * 32,
                 }
             },
+        },
+    }
+
+    (fod,) = list(iter_fixed_output_derivations(derivations))
+    assert fod.drv_path == "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-real.drv"
+    assert fod.hash_hex == "bb" * 32
+
+
+def test_iter_fixed_output_derivations_skips_non_drv_keys():
+    derivations = {
+        "version": 3,
+        "/nix/store/some-source.tar.gz": {
+            "name": "some-source.tar.gz",
+            "env": {},
+            "outputs": {},
         },
         "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-real.drv": {
             "name": "real",

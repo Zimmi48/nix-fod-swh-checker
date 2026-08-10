@@ -59,15 +59,40 @@ def _parse_derivations_json(stdout: str) -> dict[str, dict]:
             raise NixCommandError("could not parse wrapped derivations JSON: 'derivations' is not an object")
         if not any(_is_drv_store_path(key) for key in derivations):
             raise NixCommandError("could not parse derivations JSON: no derivation entries found")
-        return derivations
+        return _normalize_derivation_keys(derivations)
     if any(_is_drv_store_path(key) for key in payload):
-        return payload
+        return _normalize_derivation_keys(payload)
     raise NixCommandError("could not parse derivations JSON: no derivation entries found")
 
 
 def _is_drv_store_path(key: str) -> bool:
-    """Return True when ``key`` looks like a `/nix/store/*.drv` path."""
-    return isinstance(key, str) and key.startswith("/nix/store/") and key.endswith(".drv")
+    """Return True when ``key`` looks like a `.drv` store path.
+
+    Newer Nix versions emit only the store path basename (e.g.
+    ``013mqc5ymx4cih72blz21l6ync49i3jg-expr-strcmp.patch.drv``) as the
+    JSON object key, while older versions use the full path. Accept both
+    forms and let callers normalize keys to full paths when needed.
+    """
+    return isinstance(key, str) and key.endswith(".drv") and (
+        key.startswith("/nix/store/") or not key.startswith("/")
+    )
+
+
+def _normalize_derivation_keys(derivations: dict[str, object]) -> dict[str, dict]:
+    """Return ``derivations`` with all keys converted to full store paths.
+
+    Basename-only keys are prefixed with ``/nix/store/``. Non-derivation
+    entries are dropped so callers only receive real derivation objects.
+    """
+    normalized: dict[str, dict] = {}
+    for key, drv in derivations.items():
+        if not _is_drv_store_path(key):
+            continue
+        if not isinstance(drv, dict):
+            continue
+        drv_path = key if key.startswith("/nix/store/") else f"/nix/store/{key}"
+        normalized[drv_path] = drv
+    return normalized
 
 
 def dry_run_nix_file(
@@ -360,19 +385,17 @@ def iter_fixed_output_derivations(
     `nix derivation show`, i.e. a mapping of `.drv` store paths to derivation
     objects, each with an `outputs` mapping of output names to
     `{"path", "method", "hashAlgo", "hash"}` objects. Some newer Nix
-    versions may also include non-derivation metadata entries in the same
-    top-level object; those are ignored. An output is a FOD exactly when its
-    `hash` field is set.
+    versions emit basename-only store paths as keys and may also include
+    non-derivation metadata entries in the same top-level object; both are
+    handled by normalizing keys to full store paths and skipping unrelated
+    entries. An output is a FOD exactly when its `hash` field is set.
 
     Many Nix versions don't actually populate the `method` field in
     `outputs` and only expose it as the legacy `outputHashMode` environment
     variable (`"flat"` or `"recursive"`), so that's used as a fallback.
     """
-    for drv_path, drv in derivations.items():
-        if not _is_drv_store_path(drv_path):
-            continue
-        if not isinstance(drv, dict):
-            continue
+    normalized = _normalize_derivation_keys(derivations)
+    for drv_path, drv in normalized.items():
         outputs = drv.get("outputs", {}) or {}
         if not isinstance(outputs, dict):
             continue
