@@ -231,7 +231,7 @@ def test_swh_fods_expression_sanitizes_drv_labels():
         ),
     ]
     code = swh_fods_expression(exprs)
-    assert '"_nix_store_013mqc5ymx4cih72blz21l6ync49i3jg-expr-strcmp_patch_drv" =' in code
+    assert '"nix_store_013mqc5ymx4cih72blz21l6ync49i3jg_expr_strcmp_patch_drv" =' in code
     assert '"attr_1starts_with_digit_drv" =' in code
 
 

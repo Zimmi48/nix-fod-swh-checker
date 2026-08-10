@@ -341,11 +341,21 @@ def _safe_name(name: str) -> str:
 def _safe_attr_name(name: str) -> str:
     """Return a Nix-safe attribute name from a user-facing label.
 
-    Attribute names may not contain `.` and must not start with a digit, so
-    this function replaces unsafe characters with underscores and prefixes a
-    leading digit (or an entirely numeric name) with ``attr_``.
+    Attribute names may not contain `.` or `-` and must not start with a digit,
+    so this function replaces unsafe characters with underscores, collapses
+    consecutive underscores, and prefixes a leading digit (or an entirely
+    numeric name) with ``attr_``.
     """
-    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
+    safe = "".join(c if c.isalnum() or c == "_" else "_" for c in name)
+    # Collapse consecutive underscores so the transformed label is shorter and
+    # deterministic regardless of how many non-alphanumeric characters were
+    # adjacent in the original label.
+    import re
+
+    safe = re.sub(r"_+", "_", safe)
+    if not safe:
+        return "swh_backed_fod"
+    safe = safe.strip("_")
     if not safe:
         return "swh_backed_fod"
     if safe[0].isdigit() or safe.isdigit():
