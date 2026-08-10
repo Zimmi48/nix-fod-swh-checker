@@ -436,20 +436,25 @@ def _load_results_from_json(path: Path) -> list[SWHCheckResult]:
     for raw in raw_list:
         if not isinstance(raw, dict):
             continue
-        fod = FixedOutputDerivation(**raw["fod"])
-        results.append(
-            SWHCheckResult(
-                fod=fod,
-                known=raw["known"],
-                method=SWHLookupMethod(raw["method"]),
-                detail=raw["detail"],
-                swhid=raw.get("swhid"),
-                swh_url=raw.get("swh_url"),
-                disarchive_spec=raw.get("disarchive_spec"),
-                disarchive_swhid=raw.get("disarchive_swhid"),
-                disarchive_top_dir=raw.get("disarchive_top_dir"),
+        try:
+            fod = FixedOutputDerivation(**raw["fod"])
+            results.append(
+                SWHCheckResult(
+                    fod=fod,
+                    known=raw["known"],
+                    method=SWHLookupMethod(raw["method"]),
+                    detail=raw["detail"],
+                    swhid=raw.get("swhid"),
+                    swh_url=raw.get("swh_url"),
+                    disarchive_spec=raw.get("disarchive_spec"),
+                    disarchive_swhid=raw.get("disarchive_swhid"),
+                    disarchive_top_dir=raw.get("disarchive_top_dir"),
+                )
             )
-        )
+        except KeyError as exc:
+            raise ValueError(f"missing required field {exc.args[0]!r}") from exc
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"invalid result entry: {exc}") from exc
     return results
 
 
