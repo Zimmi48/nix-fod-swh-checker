@@ -125,6 +125,27 @@ def test_iter_fixed_output_derivations_falls_back_to_output_hash_mode():
     assert recursive_fod.method == "nar"
 
 
+def test_iter_fixed_output_derivations_ignores_non_derivation_metadata():
+    derivations = {
+        "version": 3,
+        "/nix/store/fod.drv": {
+            "name": "fod",
+            "env": {},
+            "outputs": {
+                "out": {
+                    "path": "/nix/store/fod-out",
+                    "hashAlgo": "sha256",
+                    "hash": "cc" * 32,
+                }
+            },
+        },
+    }
+
+    (fod,) = list(iter_fixed_output_derivations(derivations))
+    assert fod.drv_path == "/nix/store/fod.drv"
+    assert fod.hash_hex == "cc" * 32
+
+
 def test_show_derivations_recursive_parses_json(monkeypatch):
     def fake_run(cmd, check, capture_output, text):
         assert cmd[:4] == ["nix", "derivation", "show", "--recursive"]

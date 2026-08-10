@@ -331,24 +331,34 @@ def _last_store_path(text: str) -> str | None:
 
 
 def iter_fixed_output_derivations(
-    derivations: dict[str, dict],
+    derivations: dict[str, object],
 ) -> Iterator[FixedOutputDerivation]:
     """Yield every fixed-output derivation output found in `derivations`.
 
     `derivations` is expected to be in the JSON format produced by
     `nix derivation show`, i.e. a mapping of `.drv` store paths to derivation
     objects, each with an `outputs` mapping of output names to
-    `{"path", "method", "hashAlgo", "hash"}` objects. An output is a FOD
-    exactly when its `hash` field is set.
+    `{"path", "method", "hashAlgo", "hash"}` objects. Some newer Nix
+    versions may also include non-derivation metadata entries in the same
+    top-level object; those are ignored. An output is a FOD exactly when its
+    `hash` field is set.
 
     Many Nix versions don't actually populate the `method` field in
     `outputs` and only expose it as the legacy `outputHashMode` environment
     variable (`"flat"` or `"recursive"`), so that's used as a fallback.
     """
     for drv_path, drv in derivations.items():
+        if not isinstance(drv, dict):
+            continue
         outputs = drv.get("outputs", {}) or {}
+        if not isinstance(outputs, dict):
+            continue
         env = drv.get("env", {}) or {}
+        if not isinstance(env, dict):
+            env = {}
         for output_name, output in outputs.items():
+            if not isinstance(output, dict):
+                continue
             hash_hex = output.get("hash")
             if not hash_hex:
                 continue
