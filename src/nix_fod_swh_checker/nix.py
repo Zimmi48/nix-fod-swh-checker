@@ -52,9 +52,11 @@ def show_derivations_recursive(
 def _parse_derivations_json(stdout: str) -> dict[str, dict]:
     payload = json.loads(stdout)
     if isinstance(payload, dict):
-        derivations = payload.get("derivations")
-        if isinstance(derivations, dict):
-            return derivations
+        if "derivations" in payload:
+            derivations = payload["derivations"]
+            if isinstance(derivations, dict):
+                return derivations
+            raise NixCommandError("could not parse wrapped derivations JSON: 'derivations' is not an object")
         return payload
     return {}
 
