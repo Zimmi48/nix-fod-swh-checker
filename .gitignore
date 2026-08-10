@@ -9,3 +9,4 @@ build/
 .mypy_cache/
 .ruff_cache/
 .direnv/
+swh-backed-fods.nix
