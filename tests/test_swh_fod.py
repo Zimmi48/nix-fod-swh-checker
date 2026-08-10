@@ -64,8 +64,32 @@ def test_content_swhid_expression():
     expr = swh_fod_expression(result)
     assert isinstance(expr, SWHFodExpression)
     assert "builtin:fetchurl" in expr.nix_code
-    assert "outputHashMode = \"flat\"" in expr.nix_code
+    assert "outputHashMode = \"git\"" in expr.nix_code
     assert "archive.softwareheritage.org/api/1/content/sha1_git:" + "b" * 40 in expr.nix_code
+
+
+def test_content_swhid_expression_uses_recursive_mode_for_nar_fod():
+    """A content SWHID found for a nar-hashed FOD must use recursive hashing."""
+    result = make_result(
+        fod=make_fod(method="nar", hash_algo="sha256", hash_hex="a" * 64),
+        method=SWHLookupMethod.BUILD_AND_IDENTIFY,
+        swhid="swh:1:cnt:" + "b" * 40,
+    )
+    expr = swh_fod_expression(result)
+    assert isinstance(expr, SWHFodExpression)
+    assert "builtin:fetchurl" in expr.nix_code
+    assert "outputHashMode = \"recursive\"" in expr.nix_code
+    assert "archive.softwareheritage.org/api/1/content/sha1_git:" + "b" * 40 in expr.nix_code
+
+
+def test_content_swhid_expression_skips_unknown_method():
+    """Content SWHIDs for methods we cannot map to outputHashMode are skipped."""
+    result = make_result(
+        fod=make_fod(method="text", hash_algo="sha256", hash_hex="a" * 64),
+        method=SWHLookupMethod.SWHID_KNOWN,
+        swhid="swh:1:cnt:" + "b" * 40,
+    )
+    assert swh_fod_expression(result) is None
 
 
 def test_content_swhid_expression_infers_algo_from_sri_hash():

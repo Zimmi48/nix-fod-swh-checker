@@ -98,6 +98,18 @@ def swh_fod_expression(result: SWHCheckResult) -> SWHFodExpression | None:
     return None
 
 
+# Map from the `method` field reported by `nix derivation show` to the
+# corresponding Nix `outputHashMode`.  A content SWHID always refers to raw
+# file bytes, but the original FOD may have hashed those bytes in different
+# ways; the generated derivation must use the same mode or the output hash
+# will not match.
+_FOD_METHOD_TO_OUTPUT_HASH_MODE = {
+    "flat": "flat",
+    "nar": "recursive",
+    "git": "git",
+}
+
+
 def _content_hash_expression(result: SWHCheckResult) -> SWHFodExpression | None:
     fod = result.fod
     if not fod.hash_algo or not fod.hash_hex:
@@ -110,6 +122,7 @@ def _content_hash_expression(result: SWHCheckResult) -> SWHFodExpression | None:
             hash_algo=fod.hash_algo,
             hash_hex=fod.hash_hex,
             url=url,
+            output_hash_mode="flat",
         ),
     )
 
@@ -129,6 +142,9 @@ def _swhid_expression(result: SWHCheckResult) -> SWHFodExpression | None:
 
 def _content_swhid_expression(result: SWHCheckResult) -> SWHFodExpression | None:
     fod = result.fod
+    output_hash_mode = _FOD_METHOD_TO_OUTPUT_HASH_MODE.get(fod.method or "flat")
+    if output_hash_mode is None:
+        return None
     sha1_git = result.swhid.removeprefix("swh:1:cnt:")
     url = f"{_SWH_API_URL}/content/sha1_git:{sha1_git}/raw/"
     hash_algo = fod.hash_algo or _algo_from_hash(fod.hash_hex) or "sha1"
@@ -140,6 +156,7 @@ def _content_swhid_expression(result: SWHCheckResult) -> SWHFodExpression | None
             hash_algo=hash_algo,
             hash_hex=hash_hex,
             url=url,
+            output_hash_mode=output_hash_mode,
         ),
     )
 
@@ -210,12 +227,13 @@ def _flat_fod_derivation(
     hash_algo: str,
     hash_hex: str,
     url: str,
+    output_hash_mode: str,
 ) -> str:
     return f"""builtins.derivation {{
   name = {nix_quote(name)};
   system = builtins.currentSystem;
   builder = "builtin:fetchurl";
-  outputHashMode = "flat";
+  outputHashMode = {nix_quote(output_hash_mode)};
   outputHashAlgo = {nix_quote(hash_algo)};
   outputHash = {nix_quote(hash_hex)};
   url = {nix_quote(url)};
