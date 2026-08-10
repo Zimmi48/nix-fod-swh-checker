@@ -7,10 +7,9 @@ SWH-backed FODs populates the Nix store with the exact store paths the
 original derivation would have produced, allowing a subsequent build of the
 original installable to succeed even when upstream sources are unavailable.
 
-The generated expressions use only Nix builtins (``builtins.fetchurl``,
-``builtins.fetchTarball`` and ``builtins.derivation``) so they do not depend
-on any particular Nixpkgs version.  Disarchive reconstructions still need the
-``disarchive`` binary available on the builder's ``PATH``.
+Single-file expressions use only Nix builtins.  Directory and disarchive
+expressions need a ``pkgs`` argument (defaulting to a pinned Nixpkgs) for
+tools such as ``curl``, ``tar`` and ``disarchive``.
 """
 from __future__ import annotations
 
@@ -36,8 +35,8 @@ class SWHFodExpression:
     """A Nix expression that builds a SWH-backed FOD.
 
     The expression evaluates to a store path whose contents match the
-    original FOD output.  It uses only Nix builtins and does not take a
-    ``pkgs`` argument.
+    original FOD output.  Single-file expressions use only Nix builtins;
+    directory and disarchive expressions require ``pkgs`` in scope.
     """
 
     label: str
@@ -153,6 +152,8 @@ def _directory_swhid_expression(result: SWHCheckResult) -> SWHFodExpression | No
         label=fod.label,
         nix_code=_directory_fod_derivation(
             name=_safe_name(fod.name),
+            hash_algo=fod.hash_algo,
+            hash_hex=fod.hash_hex,
             swhid=result.swhid,
         ),
     )
@@ -223,12 +224,25 @@ def _flat_fod_derivation(
 def _directory_fod_derivation(
     *,
     name: str,
+    hash_algo: str,
+    hash_hex: str,
     swhid: str,
 ) -> str:
     url = f"{_SWH_API_URL}/vault/flat/{swhid}/raw"
-    return f"""builtins.fetchTarball {{
-  url = {nix_quote(url)};
+    return f"""pkgs.stdenv.mkDerivation {{
   name = {nix_quote(name)};
+  outputHashMode = "recursive";
+  outputHashAlgo = {nix_quote(hash_algo)};
+  outputHash = {nix_quote(hash_hex)};
+  nativeBuildInputs = [ pkgs.curl pkgs.cacert pkgs.gnutar ];
+  buildCommand = ''
+    export SSL_CERT_FILE="${{pkgs.cacert}}/etc/ssl/certs/ca-bundle.crt"
+    mkdir -p tmp
+    curl -L -f -o tmp/bundle.tar.bz2 {nix_quote(url)}
+    tar -xjf tmp/bundle.tar.bz2 -C tmp
+    dir=$(find tmp -mindepth 1 -maxdepth 1 -type d | head -n1)
+    mv "$dir" $out
+  '';
 }}
 """
 
@@ -243,21 +257,22 @@ def _disarchive_fod_derivation(
 ) -> str:
     url = f"{_SWH_API_URL}/vault/flat/{swhid}/raw"
     return f"""let
-  dir = builtins.fetchTarball {{
-    url = {nix_quote(url)};
-    name = {nix_quote(name)};
-  }};
   specFile = builtins.toFile "disarchive.spec" {nix_quote(spec)};
 in
-builtins.derivation {{
+pkgs.stdenv.mkDerivation {{
   name = {nix_quote(name)};
-  system = builtins.currentSystem;
-  builder = "${{pkgs.disarchive}}/bin/disarchive";
-  args = [ "assemble" "$dir" specFile "-o" "$out" ];
-  inherit specFile;
   outputHashMode = "flat";
   outputHashAlgo = {nix_quote(hash_algo)};
   outputHash = {nix_quote(hash_hex)};
+  nativeBuildInputs = [ pkgs.disarchive pkgs.curl pkgs.cacert pkgs.gnutar ];
+  buildCommand = ''
+    export SSL_CERT_FILE="${{pkgs.cacert}}/etc/ssl/certs/ca-bundle.crt"
+    mkdir -p tmp
+    curl -L -f -o tmp/bundle.tar.bz2 {nix_quote(url)}
+    tar -xjf tmp/bundle.tar.bz2 -C tmp
+    dir=$(find tmp -mindepth 1 -maxdepth 1 -type d | head -n1)
+    disarchive assemble "$dir" ${{specFile}} -o $out
+  '';
 }}
 """
 
@@ -273,26 +288,25 @@ def _disarchive_wrapped_fod_derivation(
 ) -> str:
     url = f"{_SWH_API_URL}/vault/flat/{stripped_swhid}/raw"
     return f"""let
-  stripped = builtins.fetchTarball {{
-    url = {nix_quote(url)};
-    name = {nix_quote(name + "-stripped")};
-  }};
   specFile = builtins.toFile "disarchive.spec" {nix_quote(spec)};
 in
-builtins.derivation {{
+pkgs.stdenv.mkDerivation {{
   name = {nix_quote(name)};
-  system = builtins.currentSystem;
-  builder = "${{pkgs.disarchive}}/bin/disarchive";
-  args = [ "-c" ''
-    mkdir -p "tmp/wrapped/$topDir"
-    find "${{stripped}}" -mindepth 1 -maxdepth 1 -exec mv {{}} "tmp/wrapped/$topDir/" \\;
-    ${{pkgs.disarchive}}/bin/disarchive assemble tmp/wrapped ${{specFile}} -o $out
-  '' ];
-  inherit specFile;
-  topDir = {nix_quote(top_dir)};
   outputHashMode = "flat";
   outputHashAlgo = {nix_quote(hash_algo)};
   outputHash = {nix_quote(hash_hex)};
+  nativeBuildInputs = [ pkgs.disarchive pkgs.curl pkgs.cacert pkgs.gnutar ];
+  topDir = {nix_quote(top_dir)};
+  buildCommand = ''
+    export SSL_CERT_FILE="${{pkgs.cacert}}/etc/ssl/certs/ca-bundle.crt"
+    mkdir -p tmp
+    curl -L -f -o tmp/bundle.tar.bz2 {nix_quote(url)}
+    tar -xjf tmp/bundle.tar.bz2 -C tmp
+    stripped=$(find tmp -mindepth 1 -maxdepth 1 -type d | head -n1)
+    mkdir -p "tmp/wrapped/$topDir"
+    find "$stripped" -mindepth 1 -maxdepth 1 -exec mv {{}} "tmp/wrapped/$topDir/" \\;
+    disarchive assemble tmp/wrapped ${{specFile}} -o $out
+  '';
 }}
 """
 
@@ -316,11 +330,11 @@ def swh_fods_expression(
     """Return a Nix expression that builds all SWH-backed FODs.
 
     The result is a function ``{ pkgs ? ... }: { ... }`` mapping a safe name
-    to each SWH-backed expression.  Flat files and directories use only Nix
-    builtins; disarchive reconstructions need ``pkgs.disarchive`` as a real
-    derivation input.  ``pkgs`` defaults to a pinned Nixpkgs fetched with
-    ``builtins.fetchTarball`` so the file evaluates standalone, but callers
-    can override it with their own Nixpkgs invocation.
+    to each SWH-backed expression.  Flat files use only Nix builtins;
+    directory and disarchive expressions need ``pkgs`` for tools such as
+    ``curl``, ``tar`` and ``disarchive``.  ``pkgs`` defaults to a pinned
+    Nixpkgs fetched with ``builtins.fetchTarball`` so the file evaluates
+    standalone, but callers can override it with their own Nixpkgs invocation.
 
     The ``name`` parameter is kept for backward compatibility but is ignored
     because the returned attribute set is not wrapped in a single derivation.

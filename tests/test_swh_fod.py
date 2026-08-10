@@ -77,9 +77,11 @@ def test_directory_swhid_expression():
     )
     expr = swh_fod_expression(result)
     assert isinstance(expr, SWHFodExpression)
-    assert "builtins.fetchTarball" in expr.nix_code
+    assert "pkgs.stdenv.mkDerivation" in expr.nix_code
+    assert "outputHashMode = \"recursive\"" in expr.nix_code
     assert f"vault/flat/{swhid}/raw" in expr.nix_code
-    assert "pkgs" not in expr.nix_code
+    assert "curl -L -f -o tmp/bundle.tar.bz2" in expr.nix_code
+    assert "tar -xjf tmp/bundle.tar.bz2" in expr.nix_code
 
 
 def test_build_and_identify_directory_expression():
@@ -91,9 +93,11 @@ def test_build_and_identify_directory_expression():
     )
     expr = swh_fod_expression(result)
     assert isinstance(expr, SWHFodExpression)
-    assert "builtins.fetchTarball" in expr.nix_code
+    assert "pkgs.stdenv.mkDerivation" in expr.nix_code
+    assert "outputHashMode = \"recursive\"" in expr.nix_code
     assert f"vault/flat/{swhid}/raw" in expr.nix_code
-    assert "pkgs" not in expr.nix_code
+    assert "curl -L -f -o tmp/bundle.tar.bz2" in expr.nix_code
+    assert "tar -xjf tmp/bundle.tar.bz2" in expr.nix_code
 
 
 def test_disarchive_expression_requires_spec():
@@ -119,10 +123,11 @@ def test_disarchive_expression_with_direct_swhid():
     expr = swh_fod_expression(result)
     assert isinstance(expr, SWHFodExpression)
     assert "outputHashMode = \"flat\"" in expr.nix_code
-    assert "builtins.fetchTarball" in expr.nix_code
+    assert "pkgs.stdenv.mkDerivation" in expr.nix_code
     assert "builtins.toFile \"disarchive.spec\"" in expr.nix_code
-    assert 'builder = "${pkgs.disarchive}/bin/disarchive"' in expr.nix_code
-    assert "inherit specFile" in expr.nix_code
+    assert "disarchive assemble" in expr.nix_code
+    assert "curl -L -f -o tmp/bundle.tar.bz2" in expr.nix_code
+    assert "tar -xjf tmp/bundle.tar.bz2" in expr.nix_code
     assert "(disarchive (version 0))" in expr.nix_code
 
 
@@ -140,13 +145,13 @@ def test_disarchive_expression_with_wrapped_stripped_swhid():
     expr = swh_fod_expression(result)
     assert isinstance(expr, SWHFodExpression)
     assert "outputHashMode = \"flat\"" in expr.nix_code
-    assert "builtins.fetchTarball" in expr.nix_code
+    assert "pkgs.stdenv.mkDerivation" in expr.nix_code
     assert f"vault/flat/{stripped}/raw" in expr.nix_code
     assert "tmp/wrapped/$topDir" in expr.nix_code
-    assert "inherit specFile" in expr.nix_code
     assert 'topDir = "hello-1.0"' in expr.nix_code
-    assert 'builder = "${pkgs.disarchive}/bin/disarchive"' in expr.nix_code
-    assert "${pkgs.disarchive}/bin/disarchive assemble" in expr.nix_code
+    assert "disarchive assemble" in expr.nix_code
+    assert "curl -L -f -o tmp/bundle.tar.bz2" in expr.nix_code
+    assert "tar -xjf tmp/bundle.tar.bz2" in expr.nix_code
 
 
 def test_disarchive_spec_is_quoted_for_nix():
