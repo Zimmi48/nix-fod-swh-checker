@@ -131,7 +131,7 @@ def _content_swhid_expression(result: SWHCheckResult) -> SWHFodExpression | None
     fod = result.fod
     sha1_git = result.swhid.removeprefix("swh:1:cnt:")
     url = f"{_SWH_API_URL}/content/sha1_git:{sha1_git}/raw/"
-    hash_algo = fod.hash_algo or "sha1"
+    hash_algo = fod.hash_algo or _algo_from_hash(fod.hash_hex) or "sha1"
     hash_hex = fod.hash_hex or sha1_git
     return SWHFodExpression(
         label=fod.label,
@@ -146,13 +146,14 @@ def _content_swhid_expression(result: SWHCheckResult) -> SWHFodExpression | None
 
 def _directory_swhid_expression(result: SWHCheckResult) -> SWHFodExpression | None:
     fod = result.fod
-    if not fod.hash_algo or not fod.hash_hex:
+    hash_algo = fod.hash_algo or _algo_from_hash(fod.hash_hex)
+    if not hash_algo or not fod.hash_hex:
         return None
     return SWHFodExpression(
         label=fod.label,
         nix_code=_directory_fod_derivation(
             name=_safe_name(fod.name),
-            hash_algo=fod.hash_algo,
+            hash_algo=hash_algo,
             hash_hex=fod.hash_hex,
             swhid=result.swhid,
         ),
@@ -161,7 +162,8 @@ def _directory_swhid_expression(result: SWHCheckResult) -> SWHFodExpression | No
 
 def _disarchive_expression(result: SWHCheckResult) -> SWHFodExpression | None:
     fod = result.fod
-    if not fod.hash_algo or not fod.hash_hex:
+    hash_algo = fod.hash_algo or _algo_from_hash(fod.hash_hex)
+    if not hash_algo or not fod.hash_hex:
         return None
     if not result.disarchive_spec:
         return None
@@ -175,7 +177,7 @@ def _disarchive_expression(result: SWHCheckResult) -> SWHFodExpression | None:
             label=fod.label,
             nix_code=_disarchive_fod_derivation(
                 name=_safe_name(fod.name),
-                hash_algo=fod.hash_algo,
+                hash_algo=hash_algo,
                 hash_hex=fod.hash_hex,
                 swhid=result.disarchive_swhid,
                 spec=result.disarchive_spec,
@@ -191,7 +193,7 @@ def _disarchive_expression(result: SWHCheckResult) -> SWHFodExpression | None:
             label=fod.label,
             nix_code=_disarchive_wrapped_fod_derivation(
                 name=_safe_name(fod.name),
-                hash_algo=fod.hash_algo,
+                hash_algo=hash_algo,
                 hash_hex=fod.hash_hex,
                 stripped_swhid=result.swhid,
                 top_dir=result.disarchive_top_dir,
@@ -309,6 +311,25 @@ pkgs.stdenv.mkDerivation {{
   '';
 }}
 """
+
+
+def _algo_from_hash(hash_value: str | None) -> str | None:
+    """Return the algorithm prefix of an SRI hash, if any.
+
+    Nix SRI hashes have the form ``<algo>-<base64>``. Newer ``nix derivation
+    show`` does not populate the per-output ``hashAlgo`` field, so we infer
+    the algorithm directly from the hash string when needed.
+    """
+    if not hash_value:
+        return None
+    if ":" in hash_value:
+        return None
+    if "-" not in hash_value:
+        return None
+    algo, _, rest = hash_value.partition("-")
+    if not algo or not rest:
+        return None
+    return algo
 
 
 def _safe_name(name: str) -> str:

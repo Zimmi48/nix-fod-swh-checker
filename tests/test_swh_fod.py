@@ -68,6 +68,19 @@ def test_content_swhid_expression():
     assert "archive.softwareheritage.org/api/1/content/sha1_git:" + "b" * 40 in expr.nix_code
 
 
+def test_content_swhid_expression_infers_algo_from_sri_hash():
+    """Newer Nix omits ``hashAlgo``; the algo must be inferred from the SRI hash."""
+    result = make_result(
+        fod=make_fod(method="flat", hash_algo=None, hash_hex="sha256-SaVxnA"),
+        method=SWHLookupMethod.BUILD_AND_IDENTIFY,
+        swhid="swh:1:cnt:" + "b" * 40,
+    )
+    expr = swh_fod_expression(result)
+    assert isinstance(expr, SWHFodExpression)
+    assert "outputHashAlgo = \"sha256\"" in expr.nix_code
+    assert "outputHash = \"sha256-SaVxnA\"" in expr.nix_code
+
+
 def test_directory_swhid_expression():
     swhid = "swh:1:dir:" + "b" * 40
     result = make_result(
@@ -82,6 +95,19 @@ def test_directory_swhid_expression():
     assert f"vault/flat/{swhid}/raw" in expr.nix_code
     assert "curl -L -f -o tmp/bundle.tar.bz2" in expr.nix_code
     assert "tar -xjf tmp/bundle.tar.bz2" in expr.nix_code
+
+
+def test_directory_swhid_expression_infers_algo_from_sri_hash():
+    swhid = "swh:1:dir:" + "b" * 40
+    result = make_result(
+        fod=make_fod(method="nar", hash_algo=None, hash_hex="sha256-SaVxnA"),
+        method=SWHLookupMethod.SWHID_KNOWN,
+        swhid=swhid,
+    )
+    expr = swh_fod_expression(result)
+    assert isinstance(expr, SWHFodExpression)
+    assert "outputHashAlgo = \"sha256\"" in expr.nix_code
+    assert "outputHash = \"sha256-SaVxnA\"" in expr.nix_code
 
 
 def test_build_and_identify_directory_expression():
