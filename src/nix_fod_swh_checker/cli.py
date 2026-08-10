@@ -437,7 +437,12 @@ def _load_results_from_json(path: Path) -> list[SWHCheckResult]:
         if not isinstance(raw, dict):
             continue
         try:
-            fod = FixedOutputDerivation(**raw["fod"])
+            fod_data = dict(raw["fod"])
+            # ``label`` is a computed property on ``FixedOutputDerivation`` and
+            # is included in JSON output for convenience; drop it here so the
+            # dataclass constructor does not complain about an unexpected field.
+            fod_data.pop("label", None)
+            fod = FixedOutputDerivation(**fod_data)
             results.append(
                 SWHCheckResult(
                     fod=fod,
