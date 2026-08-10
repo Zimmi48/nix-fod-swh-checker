@@ -6,8 +6,8 @@ import pytest
 from nix_fod_swh_checker.models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
 from nix_fod_swh_checker.swh_fod import (
     SWHFodExpression,
-    link_farm_expression,
     swh_fod_expression,
+    swh_fods_expression,
     write_swh_fods_nix,
 )
 
@@ -49,6 +49,7 @@ def test_content_hash_expression():
     )
     expr = swh_fod_expression(result)
     assert isinstance(expr, SWHFodExpression)
+    assert "builtin:fetchurl" in expr.nix_code
     assert "outputHashMode = \"flat\"" in expr.nix_code
     assert "archive.softwareheritage.org/api/1/content/sha256:" + "a" * 64 in expr.nix_code
 
@@ -61,6 +62,7 @@ def test_content_swhid_expression():
     )
     expr = swh_fod_expression(result)
     assert isinstance(expr, SWHFodExpression)
+    assert "builtin:fetchurl" in expr.nix_code
     assert "outputHashMode = \"flat\"" in expr.nix_code
     assert "archive.softwareheritage.org/api/1/content/sha1_git:" + "b" * 40 in expr.nix_code
 
@@ -74,10 +76,9 @@ def test_directory_swhid_expression():
     )
     expr = swh_fod_expression(result)
     assert isinstance(expr, SWHFodExpression)
-    assert "outputHashMode = \"recursive\"" in expr.nix_code
+    assert "builtins.fetchTarball" in expr.nix_code
     assert f"vault/flat/{swhid}/raw" in expr.nix_code
-    assert "pkgs.curl" in expr.nix_code
-    assert "pkgs.gnutar" in expr.nix_code
+    assert "pkgs" not in expr.nix_code
 
 
 def test_build_and_identify_directory_expression():
@@ -89,8 +90,9 @@ def test_build_and_identify_directory_expression():
     )
     expr = swh_fod_expression(result)
     assert isinstance(expr, SWHFodExpression)
-    assert "outputHashMode = \"recursive\"" in expr.nix_code
+    assert "builtins.fetchTarball" in expr.nix_code
     assert f"vault/flat/{swhid}/raw" in expr.nix_code
+    assert "pkgs" not in expr.nix_code
 
 
 def test_disarchive_expression_requires_spec():
@@ -116,9 +118,10 @@ def test_disarchive_expression_with_direct_swhid():
     expr = swh_fod_expression(result)
     assert isinstance(expr, SWHFodExpression)
     assert "outputHashMode = \"flat\"" in expr.nix_code
-    assert f"vault/flat/{swhid}/raw" in expr.nix_code
-    assert "pkgs.disarchive" in expr.nix_code
-    assert "disarchive assemble" in expr.nix_code
+    assert "builtins.fetchTarball" in expr.nix_code
+    assert "builtins.toFile \"disarchive.spec\"" in expr.nix_code
+    assert 'builder = "${pkgs.disarchive}/bin/disarchive"' in expr.nix_code
+    assert "inherit specFile" in expr.nix_code
     assert "(disarchive (version 0))" in expr.nix_code
 
 
@@ -136,27 +139,28 @@ def test_disarchive_expression_with_wrapped_stripped_swhid():
     expr = swh_fod_expression(result)
     assert isinstance(expr, SWHFodExpression)
     assert "outputHashMode = \"flat\"" in expr.nix_code
+    assert "builtins.fetchTarball" in expr.nix_code
     assert f"vault/flat/{stripped}/raw" in expr.nix_code
-    assert "tmp/wrapped/hello-1.0" in expr.nix_code
-    assert "pkgs.disarchive" in expr.nix_code
-    assert "disarchive assemble" in expr.nix_code
+    assert "tmp/wrapped/$topDir" in expr.nix_code
+    assert "inherit specFile" in expr.nix_code
+    assert 'topDir = "hello-1.0"' in expr.nix_code
+    assert 'builder = "${pkgs.disarchive}/bin/disarchive"' in expr.nix_code
+    assert "${pkgs.disarchive}/bin/disarchive assemble" in expr.nix_code
 
 
-def test_disarchive_expression_escapes_eof_delimiter():
+def test_disarchive_spec_is_quoted_for_nix():
     swhid = "swh:1:dir:" + "d" * 40
     result = make_result(
         fod=make_fod(method="flat", hash_algo="sha256", hash_hex="a" * 64),
         method=SWHLookupMethod.KNOWN_AFTER_DISARCHIVE,
         swhid=swhid,
         disarchive_swhid=swhid,
-        disarchive_spec="DISARCHIVE_EOF",
+        disarchive_spec='(name "foo\\"bar")',
     )
     expr = swh_fod_expression(result)
-    # The line that would terminate the heredoc is indented so it is treated
-    # as part of the specification rather than the closing delimiter.
-    assert " DISARCHIVE_EOF" in expr.nix_code
-    # The escaped spec line, the heredoc opening, and the closing delimiter.
-    assert expr.nix_code.count("DISARCHIVE_EOF") == 3
+    # The spec is embedded as a Nix double-quoted string, so quotes and
+    # backslashes must be escaped.
+    assert r'(name \"foo\\\"bar\")' in expr.nix_code
 
 
 def test_unknown_result_returns_none():
@@ -169,15 +173,17 @@ def test_unsupported_method_returns_none():
     assert swh_fod_expression(result) is None
 
 
-def test_link_farm_expression():
+def test_swh_fods_expression():
     exprs = [
-        SWHFodExpression(label="a", nix_code="{ pkgs }: pkgs.hello"),
-        SWHFodExpression(label="b", nix_code="{ pkgs }: pkgs.git"),
+        SWHFodExpression(label="a", nix_code="builtins.fetchurl { url = \"u\"; name = \"a\"; }"),
+        SWHFodExpression(label="b", nix_code="builtins.fetchurl { url = \"u\"; name = \"b\"; }"),
     ]
-    code = link_farm_expression(exprs, name="test-farm")
-    assert "pkgs.linkFarm test-farm" in code
-    assert "{ name = a; path = ({ pkgs }: pkgs.hello) pkgs; }" in code
-    assert "{ name = b; path = ({ pkgs }: pkgs.git) pkgs; }" in code
+    code = swh_fods_expression(exprs, name="test-farm")
+    assert code.startswith("{ pkgs ? import (builtins.fetchTarball")
+    assert code.endswith("}\n")
+    assert '"a" = builtins.fetchurl' in code
+    assert '"b" = builtins.fetchurl' in code
+    assert "github.com/NixOS/nixpkgs/archive/" in code
 
 
 def test_write_swh_fods_nix(tmp_path):
@@ -193,7 +199,9 @@ def test_write_swh_fods_nix(tmp_path):
     expressions = write_swh_fods_nix(str(path), results)
     assert len(expressions) == 1
     assert path.exists()
-    assert "swh-backed-fods" in path.read_text()
+    text = path.read_text()
+    assert text.startswith("{ pkgs ? import (builtins.fetchTarball")
+    assert "builtin:fetchurl" in text
 
 
 def test_write_swh_fods_nix_calls_on_log(tmp_path):
