@@ -41,21 +41,24 @@ jobs:
           SWH_API_TOKEN: ${{ secrets.SWH_API_TOKEN }}
         run: |
           nix run .#nix-fod-swh-check -- check nixpkgs#hello \
+            --json \
             --no-checkpoint \
             --swh-api-token "$SWH_API_TOKEN" \
             --swh-identify-timeout 10 \
-            --disarchive-timeout 10
+            --disarchive-timeout 10 \
+            | tee check-results.json
 
       - name: Generate SWH-backed FODs expression
         run: |
           nix run .#nix-fod-swh-check -- generate-swh-fods nixpkgs#hello \
+            -i check-results.json \
             -o swh-backed-fods.nix
 
       - name: Request cooking of SWH vault flat archives
         env:
           SWH_API_TOKEN: ${{ secrets.SWH_API_TOKEN }}
         run: |
-          nix run .#nix-fod-swh-check -- cook-swh-fods nixpkgs#hello
+          nix run .#nix-fod-swh-check -- cook-swh-fods swh-backed-fods.nix
 
       - name: Build SWH-backed FODs (expected to fail if not cooked)
         run: |
