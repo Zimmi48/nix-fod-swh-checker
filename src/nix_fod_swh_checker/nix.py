@@ -58,7 +58,7 @@ def _parse_derivations_json(stdout: str) -> dict[str, dict]:
                 return derivations
             raise NixCommandError("could not parse wrapped derivations JSON: 'derivations' is not an object")
         return payload
-    return {}
+    raise NixCommandError("could not parse derivations JSON: top-level value is not an object")
 
 
 def dry_run_nix_file(
