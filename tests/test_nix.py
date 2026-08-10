@@ -8,6 +8,7 @@ from nix_fod_swh_checker.models import FixedOutputDerivation
 from nix_fod_swh_checker.nix import (
     NixCommandError,
     build_nix_file,
+    dry_run_nix_file,
     iter_fixed_output_derivations,
     realise_fod,
     show_derivations_recursive,
@@ -270,3 +271,47 @@ def test_build_nix_file_command_error(monkeypatch):
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
     with pytest.raises(NixCommandError, match="build failed"):
         build_nix_file("fods.nix")
+
+
+def test_build_nix_file_with_attrs(monkeypatch):
+    calls = []
+    monkeypatch.setattr(subprocess, "Popen", _fake_popen_factory(calls))
+    build_nix_file("fods.nix", attrs=["attr1", "attr2"])
+    assert calls == [["nix", "build", "-f", "fods.nix", "attr1", "attr2"]]
+
+
+def test_dry_run_nix_file_parses_json(monkeypatch):
+    plan = [
+        {
+            "drvPath": "/nix/store/a.drv",
+            "outputs": {"out": "/nix/store/a-out"},
+        }
+    ]
+
+    def fake_run(cmd, check, capture_output, text):
+        assert cmd[:5] == ["nix", "build", "--dry-run", "-f", "fods.nix"]
+        assert "--json" in cmd
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(plan), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = dry_run_nix_file("fods.nix", ["attr1"])
+    assert result == plan
+
+
+def test_dry_run_nix_file_passes_no_substitute(monkeypatch):
+    def fake_run(cmd, check, capture_output, text):
+        assert "--no-substitute" in cmd
+        return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = dry_run_nix_file("fods.nix", no_substitute=True)
+    assert result == []
+
+
+def test_dry_run_nix_file_command_error(monkeypatch):
+    def fake_run(cmd, check, capture_output, text):
+        raise subprocess.CalledProcessError(1, cmd, stderr="error: dry run failed")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(NixCommandError, match="dry run failed"):
+        dry_run_nix_file("fods.nix")

@@ -327,10 +327,32 @@ def test_build_swh_fods_builds_generated_expression(monkeypatch, capsys, tmp_pat
 
     save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
 
-    built = []
-    monkeypatch.setattr(cli, "build_nix_file", lambda path, **kwargs: built.append(path))
-
     output = tmp_path / "out.nix"
+
+    built = []
+    monkeypatch.setattr(
+        cli, "build_nix_file", lambda path, attrs=None, **kwargs: built.append((path, attrs, kwargs))
+    )
+    monkeypatch.setattr(cli, "dry_run_nix_file", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_list_attrs_in_nix_file", lambda path: ["a"])
+    monkeypatch.setattr(
+        cli, "_eval_nix_file_outputs", lambda path: {"a": "/nix/store/out-a"}
+    )
+    monkeypatch.setattr(cli, "_extract_vault_swhids_by_attr", lambda path: {"a": dir_swhid})
+    monkeypatch.setattr(cli.os.path, "exists", lambda path: path == output)
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+        def get_vault_flat_task(self, swhid):
+            return type("Task", (), {"status": "done"})()
+
+    monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: FakeClient())
+
     exit_code = cli.main(
         [
             "build-swh-fods",
@@ -344,7 +366,7 @@ def test_build_swh_fods_builds_generated_expression(monkeypatch, capsys, tmp_pat
     )
     err = capsys.readouterr().err
     assert exit_code == 0
-    assert built == [str(output)]
+    assert built == [(str(output), ["a"], {"extra_args": [], "on_log": None})]
     assert output.exists()
     assert "built SWH-backed FOD(s)" in err
 
@@ -354,12 +376,21 @@ def test_build_swh_fods_from_nix_file(monkeypatch, capsys, tmp_path):
     nix_file.write_text('{ pkgs ? {} }: { "a" = builtins.fetchurl { url = "u"; }; }\n')
 
     built = []
-    monkeypatch.setattr(cli, "build_nix_file", lambda path, **kwargs: built.append(path))
+    monkeypatch.setattr(
+        cli, "build_nix_file", lambda path, attrs=None, **kwargs: built.append((path, attrs, kwargs))
+    )
+    monkeypatch.setattr(cli, "dry_run_nix_file", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_list_attrs_in_nix_file", lambda path: ["a"])
+    monkeypatch.setattr(
+        cli, "_eval_nix_file_outputs", lambda path: {"a": "/nix/store/out-a"}
+    )
+    monkeypatch.setattr(cli, "_extract_vault_swhids_by_attr", lambda path: {})
+    monkeypatch.setattr(cli.os.path, "exists", lambda path: False)
 
     exit_code = cli.main(["build-swh-fods", str(nix_file), "--quiet"])
     err = capsys.readouterr().err
     assert exit_code == 0
-    assert built == [str(nix_file)]
+    assert built == [(str(nix_file), ["a"], {"extra_args": [], "on_log": None})]
     assert "built SWH-backed FOD(s)" in err
 
 
@@ -377,8 +408,17 @@ def test_build_swh_fods_reports_nix_build_error(monkeypatch, capsys, tmp_path):
 
     save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
 
+    monkeypatch.setattr(cli, "dry_run_nix_file", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_list_attrs_in_nix_file", lambda path: ["a"])
     monkeypatch.setattr(
-        cli, "build_nix_file", lambda path, **kwargs: (_ for _ in ()).throw(cli.NixCommandError("nix failed"))
+        cli, "_eval_nix_file_outputs", lambda path: {"a": "/nix/store/out-a"}
+    )
+    monkeypatch.setattr(cli, "_extract_vault_swhids_by_attr", lambda path: {})
+    monkeypatch.setattr(cli.os.path, "exists", lambda path: False)
+    monkeypatch.setattr(
+        cli,
+        "build_nix_file",
+        lambda path, attrs=None, **kwargs: (_ for _ in ()).throw(cli.NixCommandError("nix failed")),
     )
 
     output = tmp_path / "out.nix"
@@ -396,3 +436,98 @@ def test_build_swh_fods_reports_nix_build_error(monkeypatch, capsys, tmp_path):
     err = capsys.readouterr().err
     assert exit_code == 1
     assert "nix failed" in err
+
+
+def test_build_swh_fods_skips_already_present_paths(monkeypatch, capsys, tmp_path):
+    nix_file = tmp_path / "swh-backed-fods.nix"
+    nix_file.write_text(
+        '{ pkgs ? {} }: { "a" = builtins.fetchurl { url = "u"; }; "b" = builtins.fetchurl { url = "v"; }; }\n'
+    )
+
+    built = []
+    monkeypatch.setattr(
+        cli, "build_nix_file", lambda path, attrs=None, **kwargs: built.append((path, attrs, kwargs))
+    )
+    monkeypatch.setattr(cli, "dry_run_nix_file", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_list_attrs_in_nix_file", lambda path: ["a", "b"])
+    monkeypatch.setattr(
+        cli, "_eval_nix_file_outputs", lambda path: {"a": "/nix/store/out-a", "b": "/nix/store/out-b"}
+    )
+    monkeypatch.setattr(cli, "_extract_vault_swhids_by_attr", lambda path: {})
+    monkeypatch.setattr(cli.os.path, "exists", lambda path: path == "/nix/store/out-a")
+
+    exit_code = cli.main(["build-swh-fods", str(nix_file), "--quiet"])
+    err = capsys.readouterr().err
+    assert exit_code == 0
+    assert built == [(str(nix_file), ["b"], {"extra_args": [], "on_log": None})]
+    assert "already in the Nix store" not in err
+
+
+def test_build_swh_fods_fails_when_vault_not_cooked(monkeypatch, capsys, tmp_path):
+    dir_swhid = "swh:1:dir:" + "b" * 40
+    nix_file = tmp_path / "swh-backed-fods.nix"
+    nix_file.write_text(
+        f'{{ pkgs ? {{}} }}: {{ "a" = pkgs.runCommand "x" {{}} "curl https://archive.softwareheritage.org/api/1/vault/flat/{dir_swhid}/raw"; }}\n'
+    )
+
+    built = []
+    monkeypatch.setattr(
+        cli, "build_nix_file", lambda path, attrs=None, **kwargs: built.append((path, attrs, kwargs))
+    )
+    monkeypatch.setattr(cli, "dry_run_nix_file", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_list_attrs_in_nix_file", lambda path: ["a"])
+    monkeypatch.setattr(
+        cli, "_eval_nix_file_outputs", lambda path: {"a": "/nix/store/out-a"}
+    )
+    monkeypatch.setattr(cli, "_extract_vault_swhids_by_attr", lambda path: {"a": dir_swhid})
+    monkeypatch.setattr(cli.os.path, "exists", lambda path: False)
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+        def get_vault_flat_task(self, swhid):
+            return type("Task", (), {"status": "new"})()
+
+    monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: FakeClient())
+
+    exit_code = cli.main(["build-swh-fods", str(nix_file), "--quiet"])
+    err = capsys.readouterr().err
+    assert exit_code == 1
+    assert "not cooked" in err
+    assert "cook-swh-fods" in err
+    assert built == []
+
+
+def test_build_swh_fods_passes_no_substitute(monkeypatch, capsys, tmp_path):
+    nix_file = tmp_path / "swh-backed-fods.nix"
+    nix_file.write_text('{ pkgs ? {} }: { "a" = builtins.fetchurl { url = "u"; }; }\n')
+
+    built = []
+    dry_run_calls = []
+
+    def fake_build_nix_file(path, attrs=None, **kwargs):
+        built.append((path, attrs, kwargs))
+
+    def fake_dry_run_nix_file(path, attrs, **kwargs):
+        dry_run_calls.append((path, attrs, kwargs))
+        return []
+
+    monkeypatch.setattr(cli, "build_nix_file", fake_build_nix_file)
+    monkeypatch.setattr(cli, "dry_run_nix_file", fake_dry_run_nix_file)
+    monkeypatch.setattr(cli, "_list_attrs_in_nix_file", lambda path: ["a"])
+    monkeypatch.setattr(
+        cli, "_eval_nix_file_outputs", lambda path: {"a": "/nix/store/out-a"}
+    )
+    monkeypatch.setattr(cli, "_extract_vault_swhids_by_attr", lambda path: {})
+    monkeypatch.setattr(cli.os.path, "exists", lambda path: False)
+
+    exit_code = cli.main(["build-swh-fods", str(nix_file), "--quiet", "--no-substitute"])
+    err = capsys.readouterr().err
+    assert exit_code == 0
+    assert built == [(str(nix_file), ["a"], {"extra_args": ["--no-substitute"], "on_log": None})]
+    assert dry_run_calls[0][2]["no_substitute"] is True
+    assert "--no-substitute" not in dry_run_calls[0][2]["extra_args"]

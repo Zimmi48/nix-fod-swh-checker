@@ -4,6 +4,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import subprocess
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -11,7 +13,13 @@ from pathlib import Path
 from .checker import check_fod
 from .checkpoint import default_checkpoint_path, load_checkpoint, save_checkpoint
 from .models import SWHCheckResult, SWHLookupMethod
-from .nix import NixCommandError, build_nix_file, iter_fixed_output_derivations, show_derivations_recursive
+from .nix import (
+    NixCommandError,
+    build_nix_file,
+    dry_run_nix_file,
+    iter_fixed_output_derivations,
+    show_derivations_recursive,
+)
 from .swh import DEFAULT_API_URL, SWHClient, SWHError
 from .swh_fod import UnsupportedSWHFodError, vault_swhids_for_results, write_swh_fods_nix
 
@@ -126,6 +134,27 @@ def _build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         help="extra argument to pass to `nix build` (can be given multiple times)",
+    )
+    build_parser.add_argument(
+        "--no-substitute",
+        action="store_true",
+        help="do not use substituters when building",
+    )
+    build_parser.add_argument(
+        "--swh-api-url",
+        default=DEFAULT_API_URL,
+        help="base URL of the Software Heritage API (default: %(default)s)",
+    )
+    build_parser.add_argument(
+        "--swh-api-token",
+        default=None,
+        help="bearer token for the Software Heritage API (or set SWH_API_TOKEN)",
+    )
+    build_parser.add_argument(
+        "--min-delay",
+        type=float,
+        default=1.0,
+        help="minimum delay in seconds between Software Heritage API requests when unauthenticated (default: %(default)s)",
     )
     build_parser.add_argument(
         "--quiet",
@@ -426,10 +455,23 @@ def _extract_vault_swhids_from_nix_file(path: str) -> set[str]:
     ``https://archive.softwareheritage.org/api/1/vault/flat/{swhid}/raw``.
     This function extracts every ``swh:1:dir:...`` identifier from those URLs.
     """
+    return set(_extract_vault_swhids_by_attr(path).values())
+
+
+def _extract_vault_swhids_by_attr(path: str) -> dict[str, str]:
+    """Parse a generated swh-backed-fods.nix file for directory SWHIDs per attribute.
+
+    Returns a mapping from attribute name to the ``swh:1:dir:...`` identifier
+    used in that attribute's vault flat URL, if any.
+    """
     text = Path(path).read_text()
-    swhids = set()
+    swhids: dict[str, str] = {}
+    current_attr: str | None = None
     for line in text.splitlines():
-        if "/vault/flat/" not in line:
+        attr_match = re.match(r'^\s*"([^"]+)"\s*=', line)
+        if attr_match:
+            current_attr = attr_match.group(1)
+        if current_attr is None or "/vault/flat/" not in line:
             continue
         start = line.find("/vault/flat/")
         rest = line[start + len("/vault/flat/") :]
@@ -438,8 +480,32 @@ def _extract_vault_swhids_from_nix_file(path: str) -> set[str]:
             continue
         candidate = rest[:end]
         if candidate.startswith("swh:1:dir:"):
-            swhids.add(candidate)
+            swhids[current_attr] = candidate
     return swhids
+
+
+def _eval_nix_file_outputs(path: str) -> dict[str, str]:
+    """Evaluate a Nix file and return a mapping of attribute names to output paths.
+
+    The file is expected to evaluate to a function returning an attribute set
+    of derivations, as produced by ``write_swh_fods_nix``.
+    """
+    cmd = ["nix", "eval", "--json", "-f", path, "--apply", "f: f {}"]
+    try:
+        proc = subprocess.run(cmd, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as exc:
+        raise NixCommandError(
+            f"'{' '.join(cmd)}' failed with exit code {exc.returncode}: {exc.stderr.strip()}"
+        ) from exc
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise NixCommandError(f"could not parse JSON output of '{' '.join(cmd)}'") from exc
+
+
+def _list_attrs_in_nix_file(path: str) -> list[str]:
+    """Return the attribute names defined in a Nix file."""
+    return list(_eval_nix_file_outputs(path).keys())
 
 
 def _run_cook_swh_fods_command(args: argparse.Namespace) -> int:
@@ -502,10 +568,83 @@ def _run_build_swh_fods_command(args: argparse.Namespace) -> int:
         nix_file = args.output
 
     on_log = None if args.quiet else _log_to_stderr
+
+    try:
+        all_attrs = _list_attrs_in_nix_file(nix_file)
+        attr_outputs = _eval_nix_file_outputs(nix_file)
+    except NixCommandError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    if not all_attrs:
+        print(
+            f"no SWH-backed FODs to build in {nix_file}",
+            file=sys.stderr,
+        )
+        return 0
+
+    dry_run_extra = list(args.nix_build_arg)
+
+    try:
+        dry_run_nix_file(
+            nix_file,
+            all_attrs,
+            extra_args=dry_run_extra,
+            on_log=on_log,
+            no_substitute=args.no_substitute,
+        )
+    except NixCommandError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    missing_attrs = [attr for attr in all_attrs if not os.path.exists(attr_outputs[attr])]
+
+    if not missing_attrs:
+        print(
+            f"all SWH-backed FOD(s) from {nix_file} are already in the Nix store",
+            file=sys.stderr,
+        )
+        return 0
+
+    if on_log:
+        on_log(
+            f"{len(missing_attrs)} SWH-backed FOD(s) missing from the Nix store"
+        )
+
+    vault_swhids_by_attr = _extract_vault_swhids_by_attr(nix_file)
+    uncooked: list[tuple[str, str, str]] = []
+    try:
+        with _swh_client_from_args(args, on_log) as client:
+            for attr in missing_attrs:
+                swhid = vault_swhids_by_attr.get(attr)
+                if not swhid:
+                    continue
+                task = client.get_vault_flat_task(swhid)
+                status = task.status if task is not None else "not requested"
+                if status != "done":
+                    uncooked.append((attr, swhid, status))
+    except SWHError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    if uncooked:
+        for attr, swhid, status in uncooked:
+            print(
+                f"error: vault flat archive for {swhid} (attribute {attr!r}) "
+                f"is not cooked (status: {status}); run 'cook-swh-fods' first",
+                file=sys.stderr,
+            )
+        return 1
+
+    build_extra = list(args.nix_build_arg)
+    if args.no_substitute:
+        build_extra.append("--no-substitute")
+
     try:
         build_nix_file(
             nix_file,
-            extra_args=args.nix_build_arg,
+            missing_attrs,
+            extra_args=build_extra,
             on_log=on_log,
         )
     except NixCommandError as exc:

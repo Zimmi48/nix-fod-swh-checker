@@ -49,20 +49,54 @@ def show_derivations_recursive(
         raise NixCommandError(f"could not parse JSON output of '{' '.join(cmd)}'") from exc
 
 
+def dry_run_nix_file(
+    path: str,
+    attrs: list[str] | None = None,
+    *,
+    nix_binary: str = "nix",
+    extra_args: Iterable[str] | None = None,
+    on_log: Callable[[str], None] | None = None,
+    no_substitute: bool = False,
+) -> list[dict]:
+    """Run `nix build --dry-run -f <path> <attrs> --json` and parse the JSON.
+
+    Returns a list of ``{"drvPath": "...", "outputs": {"out": "..."}}``
+    objects describing the derivations Nix selected for the requested
+    attributes. Passing ``no_substitute=True`` adds ``--no-substitute`` so the
+    dry run ignores configured substituters.
+    """
+    cmd = [nix_binary, "build", "--dry-run", "-f", path, "--json"]
+    if no_substitute:
+        cmd.append("--no-substitute")
+    if attrs:
+        cmd.extend(attrs)
+    cmd.extend(extra_args or [])
+    if on_log:
+        on_log(f"running '{' '.join(cmd)}'...")
+    proc = _run_nix(cmd, nix_binary)
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise NixCommandError(f"could not parse JSON output of '{' '.join(cmd)}'") from exc
+
+
 def build_nix_file(
     path: str,
+    attrs: list[str] | None = None,
     *,
     nix_binary: str = "nix",
     extra_args: Iterable[str] | None = None,
     on_log: Callable[[str], None] | None = None,
 ) -> None:
-    """Run `nix build -f <path>` to build every derivation in a Nix file.
+    """Run `nix build -f <path> [<attr> ...]` to build derivations in a Nix file.
 
     The file is expected to evaluate to an attribute set of derivations,
-    such as the expression produced by `write_swh_fods_nix`. Progress
-    messages from Nix are streamed to ``on_log`` when provided.
+    such as the expression produced by `write_swh_fods_nix`. When ``attrs`` is
+    provided, only those attribute names are built; otherwise every attribute
+    is built. Progress messages from Nix are streamed to ``on_log`` when
+    provided.
     """
-    cmd = [nix_binary, "build", "-f", path, *(extra_args or [])]
+    cmd = [nix_binary, "build", "-f", path, *(attrs or []), *(extra_args or [])]
     if on_log:
         on_log(f"running 'nix build -f {path}'...")
     _run_nix(cmd, nix_binary, on_log=on_log, stream_stderr=True)

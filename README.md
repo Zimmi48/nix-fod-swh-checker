@@ -124,12 +124,16 @@ The `disarchive` binary is automatically available in the flake's dev shell and 
 
 4. **Build** the SWH-backed FODs to populate the Nix store with the exact
    store paths the original derivation would have produced. The build command
-   can read the checkpoint again, or you can pass the generated Nix file:
+   skips any FODs that are already in the store, checks that remaining
+   vault-backed FODs are cooked, and can optionally build without substituters.
+   It can read the checkpoint again, or you can pass the generated Nix file:
 
    ```console
    nix run .#nix-fod-swh-check -- build-swh-fods nixpkgs#hello
    # or
    nix run .#nix-fod-swh-check -- build-swh-fods swh-backed-fods.nix
+   # build everything locally, ignoring substituters
+   nix run .#nix-fod-swh-check -- build-swh-fods swh-backed-fods.nix --no-substitute
    ```
 
    After this, a subsequent build of the original installable can succeed
@@ -177,14 +181,22 @@ from the expression).
 
 ### `build-swh-fods <input>`
 
-Generate a Nix expression with SWH-backed FODs and build it with `nix build`.
-Vault archives must already be cooked (use `cook-swh-fods` first if needed).
+Generate a Nix expression with SWH-backed FODs and build the missing ones
+with `nix build`. FODs whose outputs are already present in the local Nix
+store are skipped, so the command can be re-run safely as a no-op once
+everything has been built. Before building, it checks that any remaining
+vault-backed FODs have their vault flat archives cooked on Software Heritage;
+if not, it fails with a clear error telling you to run `cook-swh-fods` first.
 `<input>` can be a Nix installable previously checked, or a path to an
 already-generated `swh-backed-fods.nix` file.
 
 - `-o`, `--output` — path to write the generated expression when `<input>` is an installable (default: `swh-backed-fods.nix`).
 - `--checkpoint-file` — checkpoint to read results from when `<input>` is an installable (default: the same per-installable file used by `check`).
 - `--nix-build-arg` — extra argument to pass to `nix build` (can be given multiple times).
+- `--no-substitute` — do not use substituters when building; every missing FOD will be built locally.
+- `--swh-api-url` — base URL of the Software Heritage API.
+- `--swh-api-token` / `SWH_API_TOKEN` — authenticate to the Software Heritage API to raise rate limits.
+- `--min-delay` — minimum delay (seconds) between Software Heritage API requests (default `1.0`).
 - `--quiet` / `-q` — suppress progress messages while building.
 
 Any installable accepted by `nix derivation show` works, e.g. a flake reference (`nixpkgs#hello`), an attribute path (`-f '<nixpkgs>' hello`, passed via extra `nix` invocation), or a store path.
