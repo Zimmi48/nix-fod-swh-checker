@@ -57,7 +57,9 @@ def _parse_derivations_json(stdout: str) -> dict[str, dict]:
             if isinstance(derivations, dict):
                 return derivations
             raise NixCommandError("could not parse wrapped derivations JSON: 'derivations' is not an object")
-        return payload
+        if any(key.endswith(".drv") for key in payload):
+            return payload
+        raise NixCommandError("could not parse derivations JSON: no derivation entries found")
     raise NixCommandError("could not parse derivations JSON: top-level value is not an object")
 
 

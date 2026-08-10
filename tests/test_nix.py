@@ -190,6 +190,18 @@ def test_show_derivations_recursive_rejects_non_object_payload(monkeypatch):
         show_derivations_recursive("nixpkgs#hello")
 
 
+def test_show_derivations_recursive_rejects_flat_payload_without_drv_entries(monkeypatch):
+    payload = {"version": 3}
+
+    def fake_run(cmd, check, capture_output, text):
+        assert cmd[:4] == ["nix", "derivation", "show", "--recursive"]
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(payload), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(NixCommandError, match="no derivation entries found"):
+        show_derivations_recursive("nixpkgs#hello")
+
+
 def test_show_derivations_recursive_missing_binary(monkeypatch):
     def fake_run(cmd, check, capture_output, text):
         raise FileNotFoundError()
