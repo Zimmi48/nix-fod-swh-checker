@@ -70,6 +70,17 @@ Then build them:
 nix build -f swh-backed-fods.nix
 ```
 
+Or use the `cook-swh-fods` and `build-swh-fods` commands to ensure any required vault flat archives are cooked on Software
+Heritage, and build them. Because vault cooking can take a long time, it is
+split into a separate command so you can request cooking, come back later, and
+then build:
+
+```console
+nix run .#nix-fod-swh-check -- cook-swh-fods nixpkgs#hello
+# ...wait until cooking is done...
+nix run .#nix-fod-swh-check -- build-swh-fods nixpkgs#hello
+```
+
 The generated expression handles three cases:
 
 - **Single files** (`method=flat` or `method=git` known as `swh:1:cnt:...`): download the raw bytes from the SWH `/content/` API.
@@ -77,6 +88,53 @@ The generated expression handles three cases:
 - **Archives known after disarchive**: for archives whose raw bytes are not in SWH but whose unpacked contents are, the tool captures a [GNU Guix `disarchive`](https://ngyro.com/software/disarchive.html) specification while checking. The generated derivation downloads the directory from SWH, reconstructs the exact original archive with `disarchive assemble`, and verifies it against the original flat hash.
 
 The `disarchive` binary is automatically available in the flake's dev shell and wrapped into the packaged application.
+
+### Typical workflow
+
+1. **Check** which FODs reachable from your installable are already archived
+   on Software Heritage. This writes a checkpoint file as it goes, so it can
+   be interrupted and resumed:
+
+   ```console
+   nix run .#nix-fod-swh-check -- check nixpkgs#hello
+   ```
+
+2. **Generate** a Nix expression with SWH-backed FODs for every known result:
+
+   ```console
+   nix run .#nix-fod-swh-check -- generate-swh-fods nixpkgs#hello -o swh-backed-fods.nix
+   ```
+
+3. **Cook** any required Software Heritage vault flat archives. Directory
+   SWHIDs (`swh:1:dir:...`) are fetched as pre-generated tarballs from the
+   vault, and these tarballs may need to be cooked on demand by the SWH
+   infrastructure. This step can take a long time, so `cook-swh-fods` only
+   submits the cooking requests (or checks existing ones) and exits
+   immediately:
+
+   ```console
+   nix run .#nix-fod-swh-check -- cook-swh-fods nixpkgs#hello
+   ```
+
+   You can also pass the generated Nix file directly:
+
+   ```console
+   nix run .#nix-fod-swh-check -- cook-swh-fods swh-backed-fods.nix
+   ```
+
+4. **Build** the SWH-backed FODs to populate the Nix store with the exact
+   store paths the original derivation would have produced. The build command
+   can read the checkpoint again, or you can pass the generated Nix file:
+
+   ```console
+   nix run .#nix-fod-swh-check -- build-swh-fods nixpkgs#hello
+   # or
+   nix run .#nix-fod-swh-check -- build-swh-fods swh-backed-fods.nix
+   ```
+
+   After this, a subsequent build of the original installable can succeed
+   even if upstream sources are unavailable, because the required FOD outputs
+   are already in the store.
 
 ## Commands and options
 
@@ -102,6 +160,32 @@ Generate a Nix expression with SWH-backed FODs from a previously written checkpo
 
 - `-o`, `--output` — path to write the generated expression (default: `swh-backed-fods.nix`).
 - `--checkpoint-file` — checkpoint to read results from (default: the same per-installable file used by `check`).
+
+### `cook-swh-fods <input>`
+
+Request the cooking of any Software Heritage vault flat archives required by
+the SWH-backed FODs for `<input>`, and exit immediately. `<input>` can be a
+Nix installable previously checked (results are read from the checkpoint), or
+a path to a generated `swh-backed-fods.nix` file (vault SWHIDs are extracted
+from the expression).
+
+- `--checkpoint-file` — checkpoint to read results from when `<input>` is an installable (default: the same per-installable file used by `check`).
+- `--swh-api-url` — base URL of the Software Heritage API.
+- `--swh-api-token` / `SWH_API_TOKEN` — authenticate to the Software Heritage API to raise rate limits.
+- `--min-delay` — minimum delay (seconds) between Software Heritage API requests (default `1.0`).
+- `--quiet` / `-q` — suppress progress messages while cooking.
+
+### `build-swh-fods <input>`
+
+Generate a Nix expression with SWH-backed FODs and build it with `nix build`.
+Vault archives must already be cooked (use `cook-swh-fods` first if needed).
+`<input>` can be a Nix installable previously checked, or a path to an
+already-generated `swh-backed-fods.nix` file.
+
+- `-o`, `--output` — path to write the generated expression when `<input>` is an installable (default: `swh-backed-fods.nix`).
+- `--checkpoint-file` — checkpoint to read results from when `<input>` is an installable (default: the same per-installable file used by `check`).
+- `--nix-build-arg` — extra argument to pass to `nix build` (can be given multiple times).
+- `--quiet` / `-q` — suppress progress messages while building.
 
 Any installable accepted by `nix derivation show` works, e.g. a flake reference (`nixpkgs#hello`), an attribute path (`-f '<nixpkgs>' hello`, passed via extra `nix` invocation), or a store path.
 

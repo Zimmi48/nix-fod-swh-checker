@@ -44,6 +44,26 @@ class SWHFodExpression:
     nix_code: str
 
 
+def vault_swhids_for_results(results: list[SWHCheckResult]) -> set[str]:
+    """Return the SWHIDs whose vault flat archives must be cooked for ``results``.
+
+    Vault flat bundles are only needed for directory-backed expressions
+    (``swh:1:dir:...``). Single files are fetched via the ``/content/``
+    endpoint and do not require pre-cooking. Unknown or unsupported results
+    are ignored.
+    """
+    vault_swhids = set()
+    for result in results:
+        if not result.known or not result.swhid:
+            continue
+        expr = swh_fod_expression(result)
+        if expr is None or "/vault/flat/" not in expr.nix_code:
+            continue
+        if result.swhid.startswith("swh:1:dir:"):
+            vault_swhids.add(result.swhid)
+    return vault_swhids
+
+
 def swh_fod_expression(result: SWHCheckResult) -> SWHFodExpression | None:
     """Return a Nix expression for a SWH-backed FOD, or None if unsupported.
 

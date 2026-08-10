@@ -7,6 +7,7 @@ import pytest
 from nix_fod_swh_checker.models import FixedOutputDerivation
 from nix_fod_swh_checker.nix import (
     NixCommandError,
+    build_nix_file,
     iter_fixed_output_derivations,
     realise_fod,
     show_derivations_recursive,
@@ -206,3 +207,66 @@ def test_realise_fod_no_output_paths(monkeypatch):
     monkeypatch.setattr(subprocess, "run", fake_run)
     with pytest.raises(NixCommandError, match="produced no output path"):
         realise_fod(fod)
+
+
+def _fake_popen_factory(calls, returncode=0, stderr=""):
+    def fake_popen(cmd, **kwargs):
+        calls.append(cmd)
+
+        class FakeProc:
+            def __init__(self):
+                self.returncode = returncode
+                self._stderr = stderr
+
+            @property
+            def stderr(self):
+                return io.StringIO(self._stderr)
+
+            def communicate(self):
+                return ("", self._stderr)
+
+            def poll(self):
+                return self.returncode
+
+            def wait(self):
+                return self.returncode
+
+        return FakeProc()
+
+    return fake_popen
+
+
+def test_build_nix_file_runs_nix_build(monkeypatch):
+    calls = []
+    monkeypatch.setattr(subprocess, "Popen", _fake_popen_factory(calls))
+    build_nix_file("/path/to/fods.nix")
+    assert calls == [["nix", "build", "-f", "/path/to/fods.nix"]]
+
+
+def test_build_nix_file_passes_extra_args(monkeypatch):
+    calls = []
+    monkeypatch.setattr(subprocess, "Popen", _fake_popen_factory(calls))
+    build_nix_file("fods.nix", extra_args=["--rebuild", "--no-link"])
+    assert calls == [["nix", "build", "-f", "fods.nix", "--rebuild", "--no-link"]]
+
+
+def test_build_nix_file_command_error(monkeypatch):
+    def fake_popen(cmd, **kwargs):
+        class FakeProc:
+            returncode = 1
+            stderr = io.StringIO("error: build failed")
+
+            def communicate(self):
+                return ("", "error: build failed")
+
+            def poll(self):
+                return self.returncode
+
+            def wait(self):
+                return self.returncode
+
+        return FakeProc()
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    with pytest.raises(NixCommandError, match="build failed"):
+        build_nix_file("fods.nix")

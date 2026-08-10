@@ -8,6 +8,7 @@ from nix_fod_swh_checker.swh_fod import (
     SWHFodExpression,
     swh_fod_expression,
     swh_fods_expression,
+    vault_swhids_for_results,
     write_swh_fods_nix,
 )
 
@@ -214,3 +215,54 @@ def test_write_swh_fods_nix_calls_on_log(tmp_path):
     logs = []
     write_swh_fods_nix(str(tmp_path / "out.nix"), results, on_log=logs.append)
     assert any("wrote 1 SWH-backed FOD" in log for log in logs)
+
+
+def test_vault_swhids_for_content_hash_returns_empty():
+    result = make_result(
+        method=SWHLookupMethod.CONTENT_HASH,
+        swhid="swh:1:cnt:" + "b" * 40,
+    )
+    assert vault_swhids_for_results([result]) == set()
+
+
+def test_vault_swhids_for_directory_swhid():
+    swhid = "swh:1:dir:" + "b" * 40
+    result = make_result(
+        fod=make_fod(method="nar", hash_algo="sha256", hash_hex="a" * 64),
+        method=SWHLookupMethod.SWHID_KNOWN,
+        swhid=swhid,
+    )
+    assert vault_swhids_for_results([result]) == {swhid}
+
+
+def test_vault_swhids_for_build_and_identify_directory():
+    swhid = "swh:1:dir:" + "c" * 40
+    result = make_result(
+        fod=make_fod(method="nar", hash_algo="sha256", hash_hex="a" * 64),
+        method=SWHLookupMethod.BUILD_AND_IDENTIFY,
+        swhid=swhid,
+    )
+    assert vault_swhids_for_results([result]) == {swhid}
+
+
+def test_vault_swhids_for_disarchive_wrapped_directory():
+    stripped = "swh:1:dir:" + "d" * 40
+    result = make_result(
+        fod=make_fod(method="flat", hash_algo="sha256", hash_hex="a" * 64),
+        method=SWHLookupMethod.KNOWN_AFTER_DISARCHIVE,
+        swhid=stripped,
+        disarchive_swhid="swh:1:dir:" + "e" * 40,
+        disarchive_top_dir="hello-1.0",
+        disarchive_spec="(disarchive (version 0))",
+    )
+    assert vault_swhids_for_results([result]) == {stripped}
+
+
+def test_vault_swhids_for_unknown_result_returns_empty():
+    result = make_result(known=False)
+    assert vault_swhids_for_results([result]) == set()
+
+
+def test_vault_swhids_for_unsupported_method_returns_empty():
+    result = make_result(method=SWHLookupMethod.UNSUPPORTED)
+    assert vault_swhids_for_results([result]) == set()

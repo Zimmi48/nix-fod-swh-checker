@@ -24,9 +24,25 @@ class SWHError(RuntimeError):
     """Raised on unexpected errors talking to the Software Heritage API."""
 
 
+class VaultCookingError(SWHError):
+    """Raised when a vault cooking task fails or times out."""
+
+
 @dataclass
 class ContentLookupResult:
     known: bool
+    raw: dict | None = None
+
+
+@dataclass
+class VaultCookingTask:
+    """Status of a Software Heritage vault flat cooking task."""
+
+    id: int
+    swhid: str
+    status: str
+    progress_message: str
+    fetch_url: str | None = None
     raw: dict | None = None
 
 
@@ -168,6 +184,99 @@ class SWHClient:
             raise SWHError(f"unexpected status {response.status_code} calling /known/")
         data = response.json()
         return {swhid: bool(info.get("known")) for swhid, info in data.items()}
+
+    def cook_vault_flat(self, swhid: str) -> VaultCookingTask:
+        """Request the cooking of a vault flat archive for ``swhid``.
+
+        Corresponds to `POST /vault/flat/{swhid}/`.
+        """
+        response = self._request("POST", f"/vault/flat/{swhid}/")
+        if response.status_code not in (200, 201):
+            raise SWHError(
+                f"unexpected status {response.status_code} requesting vault flat cooking for {swhid}"
+            )
+        data = response.json()
+        return self._task_from_json(data)
+
+    def get_vault_flat_task(self, swhid: str) -> VaultCookingTask | None:
+        """Check the status of a vault flat cooking task for ``swhid``.
+
+        Corresponds to `GET /vault/flat/{swhid}/`. Returns ``None`` if no
+        cooking task has been requested yet for this SWHID.
+        """
+        response = self._request("GET", f"/vault/flat/{swhid}/")
+        if response.status_code == 404:
+            return None
+        if response.status_code != 200:
+            raise SWHError(
+                f"unexpected status {response.status_code} checking vault flat task for {swhid}"
+            )
+        return self._task_from_json(response.json())
+
+    def ensure_vault_flat_cooking(self, swhid: str) -> VaultCookingTask:
+        """Request cooking of a vault flat archive if no task exists yet.
+
+        If a task already exists for ``swhid``, its current status is returned
+        without making a POST request. Otherwise, a new cooking task is
+        created. This is a fire-and-forget helper: it does not wait for the
+        task to complete.
+        """
+        task = self.get_vault_flat_task(swhid)
+        if task is not None:
+            return task
+        return self.cook_vault_flat(swhid)
+
+    def wait_for_vault_flat(
+        self,
+        swhid: str,
+        *,
+        timeout: float = 600.0,
+        poll_interval: float = 5.0,
+    ) -> VaultCookingTask:
+        """Request (or wait for) a vault flat archive to be cooked.
+
+        If no cooking task exists yet for ``swhid``, one is created.  The
+        function then polls the task status until it is ``done`` or ``failed``,
+        or until ``timeout`` seconds have elapsed.
+        """
+        deadline = time.monotonic() + timeout
+        task = self.ensure_vault_flat_cooking(swhid)
+
+        while task.status not in ("done", "failed"):
+            if time.monotonic() > deadline:
+                raise VaultCookingError(
+                    f"timed out after {timeout}s waiting for vault flat task {task.id} "
+                    f"for {swhid} (status: {task.status})"
+                )
+            if self.on_log:
+                self.on_log(
+                    f"vault flat task {task.id} for {swhid}: {task.status} "
+                    f"({task.progress_message}); polling..."
+                )
+            time.sleep(poll_interval)
+            task = self.get_vault_flat_task(swhid)
+            if task is None:
+                raise VaultCookingError(
+                    f"vault flat task for {swhid} disappeared while waiting"
+                )
+
+        if task.status == "failed":
+            raise VaultCookingError(
+                f"vault flat task {task.id} for {swhid} failed: {task.progress_message}"
+            )
+
+        return task
+
+    @staticmethod
+    def _task_from_json(data: dict) -> VaultCookingTask:
+        return VaultCookingTask(
+            id=data["id"],
+            swhid=data["swhid"],
+            status=data["status"],
+            progress_message=data.get("progress_message", ""),
+            fetch_url=data.get("fetch_url"),
+            raw=data,
+        )
 
     def close(self) -> None:
         self.session.close()

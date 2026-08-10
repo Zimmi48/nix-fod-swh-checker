@@ -11,9 +11,9 @@ from pathlib import Path
 from .checker import check_fod
 from .checkpoint import default_checkpoint_path, load_checkpoint, save_checkpoint
 from .models import SWHCheckResult, SWHLookupMethod
-from .nix import NixCommandError, iter_fixed_output_derivations, show_derivations_recursive
+from .nix import NixCommandError, build_nix_file, iter_fixed_output_derivations, show_derivations_recursive
 from .swh import DEFAULT_API_URL, SWHClient, SWHError
-from .swh_fod import UnsupportedSWHFodError, write_swh_fods_nix
+from .swh_fod import UnsupportedSWHFodError, vault_swhids_for_results, write_swh_fods_nix
 
 _STATUS_LABELS = {True: "KNOWN", False: "UNKNOWN", None: "UNDETERMINED"}
 
@@ -64,6 +64,74 @@ def _build_parser() -> argparse.ArgumentParser:
         "--checkpoint-file",
         default=None,
         help="checkpoint to read results from (default: a per-installable file under $XDG_CACHE_HOME/nix-fod-swh-checker/)",
+    )
+
+    cook_parser = subparsers.add_parser(
+        "cook-swh-fods",
+        help="request cooking of Software Heritage vault flat archives for known FODs",
+    )
+    cook_parser.add_argument(
+        "input",
+        help="a Nix installable previously checked, or a path to a generated swh-backed-fods.nix file",
+    )
+    cook_parser.add_argument(
+        "--checkpoint-file",
+        default=None,
+        help="checkpoint to read results from (default: a per-installable file under $XDG_CACHE_HOME/nix-fod-swh-checker/)",
+    )
+    cook_parser.add_argument(
+        "--swh-api-url",
+        default=DEFAULT_API_URL,
+        help="base URL of the Software Heritage API (default: %(default)s)",
+    )
+    cook_parser.add_argument(
+        "--swh-api-token",
+        default=None,
+        help="bearer token for the Software Heritage API (or set SWH_API_TOKEN)",
+    )
+    cook_parser.add_argument(
+        "--min-delay",
+        type=float,
+        default=1.0,
+        help="minimum delay in seconds between Software Heritage API requests when unauthenticated (default: %(default)s)",
+    )
+    cook_parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="do not print progress messages to stderr while cooking",
+    )
+
+    build_parser = subparsers.add_parser(
+        "build-swh-fods",
+        help="generate SWH-backed FODs and build them",
+    )
+    build_parser.add_argument(
+        "input",
+        help="a Nix installable previously checked, or a path to a generated swh-backed-fods.nix file",
+    )
+    build_parser.add_argument(
+        "-o",
+        "--output",
+        default="swh-backed-fods.nix",
+        help="path to write the generated Nix expression (default: %(default)s)",
+    )
+    build_parser.add_argument(
+        "--checkpoint-file",
+        default=None,
+        help="checkpoint to read results from (default: a per-installable file under $XDG_CACHE_HOME/nix-fod-swh-checker/)",
+    )
+    build_parser.add_argument(
+        "--nix-build-arg",
+        action="append",
+        default=[],
+        help="extra argument to pass to `nix build` (can be given multiple times)",
+    )
+    build_parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="do not print progress messages to stderr while building",
     )
     check_parser.add_argument(
         "--swh-api-url",
@@ -310,12 +378,159 @@ def _run_generate_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _is_nix_file(path: str) -> bool:
+    return path.endswith(".nix") and Path(path).is_file()
+
+
+def _load_results_for_build(args: argparse.Namespace) -> list[SWHCheckResult] | None:
+    if _is_nix_file(args.input):
+        return []
+
+    checkpoint_path = (
+        Path(args.checkpoint_file)
+        if args.checkpoint_file
+        else default_checkpoint_path(args.input)
+    )
+    checked = load_checkpoint(checkpoint_path)
+    if not checked:
+        print(
+            f"error: no checkpoint found at {checkpoint_path}; "
+            "run 'nix-fod-swh-check check <installable>' first, "
+            "or pass a generated swh-backed-fods.nix file",
+            file=sys.stderr,
+        )
+        return None
+    return list(checked.values())
+
+
+def _swh_client_from_args(args: argparse.Namespace, on_log) -> SWHClient:
+    api_token = args.swh_api_token or os.environ.get("SWH_API_TOKEN")
+    if not api_token and on_log:
+        on_log(
+            "warning: no Software Heritage API token provided; "
+            "anonymous requests are heavily rate-limited. "
+            "Use --swh-api-token or set SWH_API_TOKEN."
+        )
+    return SWHClient(
+        api_url=args.swh_api_url,
+        api_token=api_token,
+        min_delay=args.min_delay,
+        on_log=on_log,
+    )
+
+
+def _extract_vault_swhids_from_nix_file(path: str) -> set[str]:
+    """Parse a generated swh-backed-fods.nix file for directory SWHIDs.
+
+    The generated expressions use URLs of the form
+    ``https://archive.softwareheritage.org/api/1/vault/flat/{swhid}/raw``.
+    This function extracts every ``swh:1:dir:...`` identifier from those URLs.
+    """
+    text = Path(path).read_text()
+    swhids = set()
+    for line in text.splitlines():
+        if "/vault/flat/" not in line:
+            continue
+        start = line.find("/vault/flat/")
+        rest = line[start + len("/vault/flat/") :]
+        end = rest.find("/raw")
+        if end == -1:
+            continue
+        candidate = rest[:end]
+        if candidate.startswith("swh:1:dir:"):
+            swhids.add(candidate)
+    return swhids
+
+
+def _run_cook_swh_fods_command(args: argparse.Namespace) -> int:
+    if _is_nix_file(args.input):
+        vault_swhids = _extract_vault_swhids_from_nix_file(args.input)
+    else:
+        results = _load_results_for_build(args)
+        if results is None:
+            return 1
+        vault_swhids = vault_swhids_for_results(results)
+
+    if not vault_swhids:
+        print(
+            f"no vault flat archives need cooking for {args.input}",
+            file=sys.stderr,
+        )
+        return 0
+
+    on_log = None if args.quiet else _log_to_stderr
+    if on_log:
+        on_log(
+            f"requesting cooking of {len(vault_swhids)} vault flat archive(s) on Software Heritage..."
+        )
+
+    try:
+        with _swh_client_from_args(args, on_log) as client:
+            for swhid in sorted(vault_swhids):
+                task = client.ensure_vault_flat_cooking(swhid)
+                status = task.status if task else "unknown"
+                if on_log:
+                    on_log(f"{swhid}: {status}")
+    except SWHError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    if on_log:
+        on_log("cooking requests submitted")
+    return 0
+
+
+def _run_build_swh_fods_command(args: argparse.Namespace) -> int:
+    if _is_nix_file(args.input):
+        nix_file = args.input
+    else:
+        results = _load_results_for_build(args)
+        if results is None:
+            return 1
+        try:
+            expressions = write_swh_fods_nix(args.output, results)
+        except UnsupportedSWHFodError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+        if not expressions:
+            print(
+                f"no SWH-backed FODs to build for {args.input}",
+                file=sys.stderr,
+            )
+            return 0
+        nix_file = args.output
+
+    on_log = None if args.quiet else _log_to_stderr
+    try:
+        build_nix_file(
+            nix_file,
+            extra_args=args.nix_build_arg,
+            on_log=on_log,
+        )
+    except NixCommandError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(
+        f"built SWH-backed FOD(s) from {nix_file}",
+        file=sys.stderr,
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
     if args.command == "generate-swh-fods":
         return _run_generate_command(args)
+
+    if args.command == "cook-swh-fods":
+        return _run_cook_swh_fods_command(args)
+
+    if args.command == "build-swh-fods":
+        return _run_build_swh_fods_command(args)
 
     return _run_check_command(args)
 

@@ -140,3 +140,259 @@ def test_print_report_shows_known_after_disarchive_separately(capsys):
     out = capsys.readouterr().out
     assert "KNOWN AFTER DISARCHIVE" in out
     assert "1 known, 1 known after disarchive, 1 unknown, 0 undetermined" in out
+
+
+def test_cook_swh_fods_without_checkpoint_returns_error(capsys, tmp_path):
+    checkpoint = tmp_path / "missing.json"
+    exit_code = cli.main(
+        ["cook-swh-fods", "nixpkgs#hello", "--checkpoint-file", str(checkpoint)]
+    )
+    err = capsys.readouterr().err
+    assert exit_code == 1
+    assert "no checkpoint found" in err
+
+
+def test_cook_swh_fods_with_no_vault_needs_returns_early(capsys, tmp_path):
+    result = SWHCheckResult(
+        fod=_fod("a"),
+        known=True,
+        method=SWHLookupMethod.CONTENT_HASH,
+        detail="known",
+        swhid="swh:1:cnt:" + "b" * 40,
+    )
+    checkpoint = tmp_path / "ckpt.json"
+    from nix_fod_swh_checker.checkpoint import save_checkpoint
+
+    save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
+
+    exit_code = cli.main(
+        ["cook-swh-fods", "nixpkgs#hello", "--checkpoint-file", str(checkpoint), "--quiet"]
+    )
+    err = capsys.readouterr().err
+    assert exit_code == 0
+    assert "no vault flat archives need cooking" in err
+
+
+def test_cook_swh_fods_requests_cooking_and_exits(monkeypatch, capsys, tmp_path):
+    dir_swhid = "swh:1:dir:" + "b" * 40
+    result = SWHCheckResult(
+        fod=_fod("a"),
+        known=True,
+        method=SWHLookupMethod.SWHID_KNOWN,
+        detail="known",
+        swhid=dir_swhid,
+    )
+    checkpoint = tmp_path / "ckpt.json"
+    from nix_fod_swh_checker.checkpoint import save_checkpoint
+
+    save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
+
+    cooked = []
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+        def ensure_vault_flat_cooking(self, swhid):
+            cooked.append(swhid)
+            return type("Task", (), {"status": "new"})()
+
+    monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: FakeClient())
+
+    exit_code = cli.main(
+        ["cook-swh-fods", "nixpkgs#hello", "--checkpoint-file", str(checkpoint)]
+    )
+    err = capsys.readouterr().err
+    assert exit_code == 0
+    assert cooked == [dir_swhid]
+    assert "cooking requests submitted" in err
+
+
+def test_cook_swh_fods_from_nix_file(monkeypatch, capsys, tmp_path):
+    nix_file = tmp_path / "swh-backed-fods.nix"
+    swhid = "swh:1:dir:" + "b" * 40
+    nix_file.write_text(
+        f'{{ pkgs ? {{}} }}: {{\n  "a" = builtins.fetchTarball {{\n    url = "https://archive.softwareheritage.org/api/1/vault/flat/{swhid}/raw";\n  }};\n}}\n'
+    )
+
+    cooked = []
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+        def ensure_vault_flat_cooking(self, swhid):
+            cooked.append(swhid)
+            return type("Task", (), {"status": "new"})()
+
+    monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: FakeClient())
+
+    exit_code = cli.main(["cook-swh-fods", str(nix_file), "--quiet"])
+    err = capsys.readouterr().err
+    assert exit_code == 0
+    assert cooked == [swhid]
+
+
+def test_cook_swh_fods_reports_cooking_error(monkeypatch, capsys, tmp_path):
+    dir_swhid = "swh:1:dir:" + "b" * 40
+    result = SWHCheckResult(
+        fod=_fod("a"),
+        known=True,
+        method=SWHLookupMethod.SWHID_KNOWN,
+        detail="known",
+        swhid=dir_swhid,
+    )
+    checkpoint = tmp_path / "ckpt.json"
+    from nix_fod_swh_checker.checkpoint import save_checkpoint
+
+    save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+        def ensure_vault_flat_cooking(self, swhid, **kwargs):
+            raise cli.SWHError("cooking failed")
+
+    monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: FakeClient())
+
+    exit_code = cli.main(
+        ["cook-swh-fods", "nixpkgs#hello", "--checkpoint-file", str(checkpoint), "--quiet"]
+    )
+    err = capsys.readouterr().err
+    assert exit_code == 1
+    assert "cooking failed" in err
+
+
+def test_build_swh_fods_without_checkpoint_returns_error(capsys, tmp_path):
+    checkpoint = tmp_path / "missing.json"
+    exit_code = cli.main(
+        ["build-swh-fods", "nixpkgs#hello", "--checkpoint-file", str(checkpoint)]
+    )
+    err = capsys.readouterr().err
+    assert exit_code == 1
+    assert "no checkpoint found" in err
+
+
+def test_build_swh_fods_with_no_known_fods_returns_early(capsys, tmp_path):
+    result = SWHCheckResult(
+        fod=_fod("a"),
+        known=False,
+        method=SWHLookupMethod.CONTENT_HASH,
+        detail="not known",
+    )
+    checkpoint = tmp_path / "ckpt.json"
+    from nix_fod_swh_checker.checkpoint import save_checkpoint
+
+    save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
+
+    output = tmp_path / "out.nix"
+    exit_code = cli.main(
+        [
+            "build-swh-fods",
+            "nixpkgs#hello",
+            "--checkpoint-file",
+            str(checkpoint),
+            "-o",
+            str(output),
+            "--quiet",
+        ]
+    )
+    err = capsys.readouterr().err
+    assert exit_code == 0
+    assert "no SWH-backed FODs to build" in err
+    assert output.exists()
+
+
+def test_build_swh_fods_builds_generated_expression(monkeypatch, capsys, tmp_path):
+    dir_swhid = "swh:1:dir:" + "b" * 40
+    result = SWHCheckResult(
+        fod=_fod("a"),
+        known=True,
+        method=SWHLookupMethod.SWHID_KNOWN,
+        detail="known",
+        swhid=dir_swhid,
+    )
+    checkpoint = tmp_path / "ckpt.json"
+    from nix_fod_swh_checker.checkpoint import save_checkpoint
+
+    save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
+
+    built = []
+    monkeypatch.setattr(cli, "build_nix_file", lambda path, **kwargs: built.append(path))
+
+    output = tmp_path / "out.nix"
+    exit_code = cli.main(
+        [
+            "build-swh-fods",
+            "nixpkgs#hello",
+            "--checkpoint-file",
+            str(checkpoint),
+            "-o",
+            str(output),
+            "--quiet",
+        ]
+    )
+    err = capsys.readouterr().err
+    assert exit_code == 0
+    assert built == [str(output)]
+    assert output.exists()
+    assert "built SWH-backed FOD(s)" in err
+
+
+def test_build_swh_fods_from_nix_file(monkeypatch, capsys, tmp_path):
+    nix_file = tmp_path / "swh-backed-fods.nix"
+    nix_file.write_text('{ pkgs ? {} }: { "a" = builtins.fetchurl { url = "u"; }; }\n')
+
+    built = []
+    monkeypatch.setattr(cli, "build_nix_file", lambda path, **kwargs: built.append(path))
+
+    exit_code = cli.main(["build-swh-fods", str(nix_file), "--quiet"])
+    err = capsys.readouterr().err
+    assert exit_code == 0
+    assert built == [str(nix_file)]
+    assert "built SWH-backed FOD(s)" in err
+
+
+def test_build_swh_fods_reports_nix_build_error(monkeypatch, capsys, tmp_path):
+    dir_swhid = "swh:1:dir:" + "b" * 40
+    result = SWHCheckResult(
+        fod=_fod("a"),
+        known=True,
+        method=SWHLookupMethod.SWHID_KNOWN,
+        detail="known",
+        swhid=dir_swhid,
+    )
+    checkpoint = tmp_path / "ckpt.json"
+    from nix_fod_swh_checker.checkpoint import save_checkpoint
+
+    save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
+
+    monkeypatch.setattr(
+        cli, "build_nix_file", lambda path, **kwargs: (_ for _ in ()).throw(cli.NixCommandError("nix failed"))
+    )
+
+    output = tmp_path / "out.nix"
+    exit_code = cli.main(
+        [
+            "build-swh-fods",
+            "nixpkgs#hello",
+            "--checkpoint-file",
+            str(checkpoint),
+            "-o",
+            str(output),
+            "--quiet",
+        ]
+    )
+    err = capsys.readouterr().err
+    assert exit_code == 1
+    assert "nix failed" in err

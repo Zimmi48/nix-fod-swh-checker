@@ -49,6 +49,25 @@ def show_derivations_recursive(
         raise NixCommandError(f"could not parse JSON output of '{' '.join(cmd)}'") from exc
 
 
+def build_nix_file(
+    path: str,
+    *,
+    nix_binary: str = "nix",
+    extra_args: Iterable[str] | None = None,
+    on_log: Callable[[str], None] | None = None,
+) -> None:
+    """Run `nix build -f <path>` to build every derivation in a Nix file.
+
+    The file is expected to evaluate to an attribute set of derivations,
+    such as the expression produced by `write_swh_fods_nix`. Progress
+    messages from Nix are streamed to ``on_log`` when provided.
+    """
+    cmd = [nix_binary, "build", "-f", path, *(extra_args or [])]
+    if on_log:
+        on_log(f"running 'nix build -f {path}'...")
+    _run_nix(cmd, nix_binary, on_log=on_log, stream_stderr=True)
+
+
 def realise_fod(
     fod: FixedOutputDerivation,
     *,

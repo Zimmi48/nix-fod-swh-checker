@@ -1,7 +1,7 @@
 import pytest
 import requests
 
-from nix_fod_swh_checker.swh import SWHClient, SWHError
+from nix_fod_swh_checker.swh import SWHClient, SWHError, VaultCookingError
 
 
 class FakeResponse:
@@ -133,3 +133,111 @@ def test_request_raises_swherror_after_exhausting_retries(monkeypatch):
     monkeypatch.setattr("nix_fod_swh_checker.swh.time.sleep", lambda *_: None)
     with pytest.raises(SWHError):
         client.lookup_content("sha256", "abc")
+
+
+def _vault_task_json(swhid, status="pending", fetch_url=None):
+    return {
+        "id": 123,
+        "swhid": swhid,
+        "status": status,
+        "progress_message": "cooking",
+        "fetch_url": fetch_url,
+    }
+
+
+def test_cook_vault_flat_posts_and_returns_task(monkeypatch):
+    swhid = "swh:1:dir:" + "a" * 40
+    client = SWHClient(min_delay=0)
+    monkeypatch.setattr(
+        client.session,
+        "request",
+        lambda method, url, timeout, **kw: (
+            FakeResponse(201, _vault_task_json(swhid)) if method == "POST" else FakeResponse(404)
+        ),
+    )
+    task = client.cook_vault_flat(swhid)
+    assert task.id == 123
+    assert task.swhid == swhid
+    assert task.status == "pending"
+
+
+def test_get_vault_flat_task_returns_task(monkeypatch):
+    swhid = "swh:1:dir:" + "a" * 40
+    client = SWHClient(min_delay=0)
+    monkeypatch.setattr(
+        client.session,
+        "request",
+        lambda method, url, timeout, **kw: FakeResponse(200, _vault_task_json(swhid, status="done")),
+    )
+    task = client.get_vault_flat_task(swhid)
+    assert task.status == "done"
+
+
+def test_get_vault_flat_task_404_returns_none(monkeypatch):
+    swhid = "swh:1:dir:" + "a" * 40
+    client = SWHClient(min_delay=0)
+    monkeypatch.setattr(client.session, "request", lambda method, url, timeout, **kw: FakeResponse(404))
+    assert client.get_vault_flat_task(swhid) is None
+
+
+def test_ensure_vault_flat_cooking_checks_existing_task_before_posting(monkeypatch):
+    swhid = "swh:1:dir:" + "a" * 40
+    client = SWHClient(min_delay=0)
+    responses = [
+        FakeResponse(200, _vault_task_json(swhid, status="pending")),
+    ]
+    monkeypatch.setattr(client.session, "request", lambda method, url, timeout, **kw: responses.pop(0))
+    task = client.ensure_vault_flat_cooking(swhid)
+    assert task.status == "pending"
+
+
+def test_ensure_vault_flat_cooking_posts_when_no_task_exists(monkeypatch):
+    swhid = "swh:1:dir:" + "a" * 40
+    client = SWHClient(min_delay=0)
+    responses = [
+        FakeResponse(404),
+        FakeResponse(201, _vault_task_json(swhid, status="new")),
+    ]
+    monkeypatch.setattr(client.session, "request", lambda method, url, timeout, **kw: responses.pop(0))
+    task = client.ensure_vault_flat_cooking(swhid)
+    assert task.status == "new"
+
+
+def test_wait_for_vault_flat_polls_until_done(monkeypatch):
+    swhid = "swh:1:dir:" + "a" * 40
+    client = SWHClient(min_delay=0)
+    responses = [
+        FakeResponse(404),
+        FakeResponse(201, _vault_task_json(swhid, status="new")),
+        FakeResponse(200, _vault_task_json(swhid, status="pending")),
+        FakeResponse(200, _vault_task_json(swhid, status="done", fetch_url="https://example.com")),
+    ]
+    monkeypatch.setattr(client.session, "request", lambda method, url, timeout, **kw: responses.pop(0))
+    monkeypatch.setattr("nix_fod_swh_checker.swh.time.sleep", lambda *_: None)
+    task = client.wait_for_vault_flat(swhid, poll_interval=0.01)
+    assert task.status == "done"
+    assert task.fetch_url == "https://example.com"
+
+
+def test_wait_for_vault_flat_raises_on_failed_task(monkeypatch):
+    swhid = "swh:1:dir:" + "a" * 40
+    client = SWHClient(min_delay=0)
+    responses = [
+        FakeResponse(200, _vault_task_json(swhid, status="failed")),
+    ]
+    monkeypatch.setattr(client.session, "request", lambda method, url, timeout, **kw: responses.pop(0))
+    monkeypatch.setattr("nix_fod_swh_checker.swh.time.sleep", lambda *_: None)
+    with pytest.raises(VaultCookingError, match="failed"):
+        client.wait_for_vault_flat(swhid)
+
+
+def test_wait_for_vault_flat_raises_on_timeout(monkeypatch):
+    swhid = "swh:1:dir:" + "a" * 40
+    client = SWHClient(min_delay=0)
+    responses = [
+        FakeResponse(200, _vault_task_json(swhid, status="pending")),
+    ]
+    monkeypatch.setattr(client.session, "request", lambda method, url, timeout, **kw: responses.pop(0))
+    monkeypatch.setattr("nix_fod_swh_checker.swh.time.sleep", lambda *_: None)
+    with pytest.raises(VaultCookingError, match="timed out"):
+        client.wait_for_vault_flat(swhid, timeout=0.0)
