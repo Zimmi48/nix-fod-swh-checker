@@ -235,7 +235,7 @@ def test_iter_fixed_output_derivations_skips_non_store_path_keys():
                 }
             },
         },
-        "/nix/store/real.drv": {
+        "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-real.drv": {
             "name": "real",
             "env": {},
             "outputs": {
@@ -249,7 +249,7 @@ def test_iter_fixed_output_derivations_skips_non_store_path_keys():
     }
 
     (fod,) = list(iter_fixed_output_derivations(derivations))
-    assert fod.drv_path == "/nix/store/real.drv"
+    assert fod.drv_path == "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-real.drv"
     assert fod.hash_hex == "bb" * 32
 
 
