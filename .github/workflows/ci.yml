@@ -41,12 +41,11 @@ jobs:
           SWH_API_TOKEN: ${{ secrets.SWH_API_TOKEN }}
         run: |
           nix run .#nix-fod-swh-check -- check nixpkgs#hello \
-            --json \
+            -o check-results.json \
             --no-checkpoint \
             --swh-api-token "$SWH_API_TOKEN" \
             --swh-identify-timeout 10 \
-            --disarchive-timeout 10 \
-            | tee check-results.json
+            --disarchive-timeout 10
 
       - name: Generate SWH-backed FODs expression
         run: |

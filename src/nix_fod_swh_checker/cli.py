@@ -77,7 +77,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--json-input",
         "-i",
         default=None,
-        help="path to a JSON file containing check results (as produced by 'check --json')",
+        help="path to a JSON file containing check results (as produced by 'check -o')",
     )
 
     cook_parser = subparsers.add_parser(
@@ -197,9 +197,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="timeout in seconds for the 'disarchive disassemble' command on each archive (default: %(default)s)",
     )
     check_parser.add_argument(
-        "--json",
-        action="store_true",
-        help="print machine-readable JSON instead of a human-readable report",
+        "-o",
+        "--output",
+        default=None,
+        help="path to write machine-readable JSON results instead of printing a human-readable report",
     )
     check_parser.add_argument(
         "--only-unknown",
@@ -374,8 +375,10 @@ def _run_check_command(args: argparse.Namespace) -> int:
         if args.only_unknown:
             results = [r for r in results if r.known is not True]
 
-        if args.json:
-            print(json.dumps([_result_to_dict(r) for r in results], indent=2))
+        if args.output:
+            Path(args.output).write_text(
+                json.dumps([_result_to_dict(r) for r in results], indent=2) + "\n"
+            )
         else:
             _print_report(results)
 
@@ -394,7 +397,7 @@ def _run_generate_command(args: argparse.Namespace) -> int:
         if not results:
             print(
                 f"error: no check results found in {args.json_input}; "
-                "run 'nix-fod-swh-check check <installable> --json' first",
+                "run 'nix-fod-swh-check check <installable> -o <file>' first",
                 file=sys.stderr,
             )
             return 1
@@ -428,7 +431,7 @@ def _run_generate_command(args: argparse.Namespace) -> int:
 
 
 def _load_results_from_json(path: Path) -> list[SWHCheckResult]:
-    """Load check results from the JSON format printed by `check --json`."""
+    """Load check results from the JSON format written by `check -o`."""
     raw_list = json.loads(path.read_text())
     if not isinstance(raw_list, list):
         raise ValueError("top-level value is not a list")

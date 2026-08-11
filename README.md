@@ -148,7 +148,7 @@ The top-level command is `nix-fod-swh-check`. It requires an explicit subcommand
 
 Check every FOD reachable from `<installable>` against Software Heritage.
 
-- `--json` — print machine-readable JSON instead of the human-readable report.
+- `-o`, `--output` — write machine-readable JSON results to a file instead of printing the human-readable report.
 - `--only-unknown` — only report FODs that are not known to Software Heritage (or undetermined).
 - `--quiet` / `-q` — suppress the stderr progress messages.
 - `--checkpoint-file` — path to the checkpoint file (default: a per-installable file under `$XDG_CACHE_HOME/nix-fod-swh-checker/`).
