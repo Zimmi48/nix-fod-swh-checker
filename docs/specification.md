@@ -207,9 +207,9 @@ When `<input>` is an installable, the command first generates the expression and
 The command then:
 
 1. Lists the attribute names defined in the Nix file.
-2. Runs `nix build --dry-run -f <file> <attrs> --json` to determine output paths.
+2. Runs `nix build --dry-run -f <file> <attrs> --json` to determine output paths and which derivations would be built locally versus fetched from a substituter.
 3. Checks which output paths are already in the local Nix store.
-4. For any missing vault-backed FODs, verifies that the corresponding vault flat archives are cooked on Software Heritage.
+4. For any missing vault-backed FODs whose derivation would be built locally, verifies that the corresponding vault flat archives are cooked on Software Heritage. FODs that would be fetched from a substituter do not require vault cooking.
 5. Builds the missing attributes with `nix build -f <file> <attrs>`.
 
 If all outputs are already in the store, the command reports this and exits `0` without building.

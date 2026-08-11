@@ -637,7 +637,7 @@ def _run_build_swh_fods_command(args: argparse.Namespace) -> int:
     dry_run_extra = list(args.nix_build_arg)
 
     try:
-        dry_run_nix_file(
+        dry_run_plan = dry_run_nix_file(
             nix_file,
             all_attrs,
             extra_args=dry_run_extra,
@@ -662,6 +662,16 @@ def _run_build_swh_fods_command(args: argparse.Namespace) -> int:
             f"{len(missing_attrs)} SWH-backed FOD(s) missing from the Nix store"
         )
 
+    # Map each top-level output path to its derivation path so we can tell
+    # from the dry-run plan whether the attribute will be built locally or
+    # fetched from a substituter.  Vault archives only need to be cooked for
+    # attributes that will actually be built.
+    output_path_to_drv_path = {
+        entry["outputs"]["out"]: entry["drvPath"]
+        for entry in dry_run_plan.plan
+        if isinstance(entry.get("outputs"), dict) and "out" in entry["outputs"]
+    }
+
     vault_swhids_by_attr = _extract_vault_swhids_by_attr(nix_file)
     uncooked: list[tuple[str, str, str]] = []
     try:
@@ -669,6 +679,13 @@ def _run_build_swh_fods_command(args: argparse.Namespace) -> int:
             for attr in missing_attrs:
                 swhid = vault_swhids_by_attr.get(attr)
                 if not swhid:
+                    continue
+                output_path = attr_outputs[attr]
+                drv_path = output_path_to_drv_path.get(output_path)
+                if drv_path is not None and drv_path not in dry_run_plan.will_build:
+                    # The attribute will be fetched from a substituter (or is
+                    # already accounted for otherwise), so no vault cooking is
+                    # required for it.
                     continue
                 task = client.get_vault_flat_task(swhid)
                 status = task.status if task is not None else "not requested"

@@ -5,6 +5,7 @@ import pytest
 from nix_fod_swh_checker import cli
 from nix_fod_swh_checker.cli import _print_report, _result_to_dict
 from nix_fod_swh_checker.models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
+from nix_fod_swh_checker.nix import DryRunPlan
 
 
 class _NullContextClient:
@@ -333,7 +334,15 @@ def test_build_swh_fods_builds_generated_expression(monkeypatch, capsys, tmp_pat
     monkeypatch.setattr(
         cli, "build_nix_file", lambda path, attrs=None, **kwargs: built.append((path, attrs, kwargs))
     )
-    monkeypatch.setattr(cli, "dry_run_nix_file", lambda *a, **k: None)
+    monkeypatch.setattr(
+        cli,
+        "dry_run_nix_file",
+        lambda *a, **k: DryRunPlan(
+            plan=[{"outputs": {"out": "/nix/store/out-a"}, "drvPath": "/nix/store/a.drv"}],
+            will_build={"/nix/store/a.drv"},
+            will_fetch=set(),
+        ),
+    )
     monkeypatch.setattr(cli, "_list_attrs_in_nix_file", lambda path: ["a"])
     monkeypatch.setattr(
         cli, "_eval_nix_file_outputs", lambda path: {"a": "/nix/store/out-a"}
@@ -379,7 +388,11 @@ def test_build_swh_fods_from_nix_file(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(
         cli, "build_nix_file", lambda path, attrs=None, **kwargs: built.append((path, attrs, kwargs))
     )
-    monkeypatch.setattr(cli, "dry_run_nix_file", lambda *a, **k: None)
+    monkeypatch.setattr(
+        cli,
+        "dry_run_nix_file",
+        lambda *a, **k: DryRunPlan(plan=[], will_build=set(), will_fetch=set()),
+    )
     monkeypatch.setattr(cli, "_list_attrs_in_nix_file", lambda path: ["a"])
     monkeypatch.setattr(
         cli, "_eval_nix_file_outputs", lambda path: {"a": "/nix/store/out-a"}
@@ -408,7 +421,11 @@ def test_build_swh_fods_reports_nix_build_error(monkeypatch, capsys, tmp_path):
 
     save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
 
-    monkeypatch.setattr(cli, "dry_run_nix_file", lambda *a, **k: None)
+    monkeypatch.setattr(
+        cli,
+        "dry_run_nix_file",
+        lambda *a, **k: DryRunPlan(plan=[], will_build=set(), will_fetch=set()),
+    )
     monkeypatch.setattr(cli, "_list_attrs_in_nix_file", lambda path: ["a"])
     monkeypatch.setattr(
         cli, "_eval_nix_file_outputs", lambda path: {"a": "/nix/store/out-a"}
@@ -448,7 +465,11 @@ def test_build_swh_fods_skips_already_present_paths(monkeypatch, capsys, tmp_pat
     monkeypatch.setattr(
         cli, "build_nix_file", lambda path, attrs=None, **kwargs: built.append((path, attrs, kwargs))
     )
-    monkeypatch.setattr(cli, "dry_run_nix_file", lambda *a, **k: None)
+    monkeypatch.setattr(
+        cli,
+        "dry_run_nix_file",
+        lambda *a, **k: DryRunPlan(plan=[], will_build=set(), will_fetch=set()),
+    )
     monkeypatch.setattr(cli, "_list_attrs_in_nix_file", lambda path: ["a", "b"])
     monkeypatch.setattr(
         cli, "_eval_nix_file_outputs", lambda path: {"a": "/nix/store/out-a", "b": "/nix/store/out-b"}
@@ -474,7 +495,15 @@ def test_build_swh_fods_fails_when_vault_not_cooked(monkeypatch, capsys, tmp_pat
     monkeypatch.setattr(
         cli, "build_nix_file", lambda path, attrs=None, **kwargs: built.append((path, attrs, kwargs))
     )
-    monkeypatch.setattr(cli, "dry_run_nix_file", lambda *a, **k: None)
+    monkeypatch.setattr(
+        cli,
+        "dry_run_nix_file",
+        lambda *a, **k: DryRunPlan(
+            plan=[{"outputs": {"out": "/nix/store/out-a"}, "drvPath": "/nix/store/a.drv"}],
+            will_build={"/nix/store/a.drv"},
+            will_fetch=set(),
+        ),
+    )
     monkeypatch.setattr(cli, "_list_attrs_in_nix_file", lambda path: ["a"])
     monkeypatch.setattr(
         cli, "_eval_nix_file_outputs", lambda path: {"a": "/nix/store/out-a"}
@@ -500,6 +529,55 @@ def test_build_swh_fods_fails_when_vault_not_cooked(monkeypatch, capsys, tmp_pat
     assert "not cooked" in err
     assert "cook-swh-fods" in err
     assert built == []
+
+
+def test_build_swh_fods_skips_vault_check_for_fetched_paths(monkeypatch, capsys, tmp_path):
+    dir_swhid = "swh:1:dir:" + "b" * 40
+    nix_file = tmp_path / "swh-backed-fods.nix"
+    nix_file.write_text(
+        f'{{ pkgs ? {{}} }}: {{ "a" = pkgs.runCommand "x" {{}} "curl https://archive.softwareheritage.org/api/1/vault/flat/{dir_swhid}/raw"; }}\n'
+    )
+
+    built = []
+    vault_checked: list[str] = []
+    monkeypatch.setattr(
+        cli, "build_nix_file", lambda path, attrs=None, **kwargs: built.append((path, attrs, kwargs))
+    )
+    monkeypatch.setattr(
+        cli,
+        "dry_run_nix_file",
+        lambda *a, **k: DryRunPlan(
+            plan=[{"outputs": {"out": "/nix/store/out-a"}, "drvPath": "/nix/store/a.drv"}],
+            will_build=set(),
+            will_fetch={"/nix/store/out-a"},
+        ),
+    )
+    monkeypatch.setattr(cli, "_list_attrs_in_nix_file", lambda path: ["a"])
+    monkeypatch.setattr(
+        cli, "_eval_nix_file_outputs", lambda path: {"a": "/nix/store/out-a"}
+    )
+    monkeypatch.setattr(cli, "_extract_vault_swhids_by_attr", lambda path: {"a": dir_swhid})
+    monkeypatch.setattr(cli.os.path, "exists", lambda path: False)
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+        def get_vault_flat_task(self, swhid):
+            vault_checked.append(swhid)
+            return type("Task", (), {"status": "new"})()
+
+    monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: FakeClient())
+
+    exit_code = cli.main(["build-swh-fods", str(nix_file), "--quiet"])
+    err = capsys.readouterr().err
+    assert exit_code == 0
+    assert vault_checked == []
+    assert built == [(str(nix_file), ["a"], {"extra_args": [], "on_log": None})]
+    assert "built SWH-backed FOD(s)" in err
 
 
 def test_generate_swh_fods_round_trips_json_input_with_label(monkeypatch, tmp_path):
@@ -547,7 +625,7 @@ def test_build_swh_fods_passes_no_substitute(monkeypatch, capsys, tmp_path):
 
     def fake_dry_run_nix_file(path, attrs, **kwargs):
         dry_run_calls.append((path, attrs, kwargs))
-        return []
+        return DryRunPlan(plan=[], will_build=set(), will_fetch=set())
 
     monkeypatch.setattr(cli, "build_nix_file", fake_build_nix_file)
     monkeypatch.setattr(cli, "dry_run_nix_file", fake_dry_run_nix_file)

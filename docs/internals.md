@@ -10,7 +10,7 @@ The tool is structured as a small Python package with the following modules:
 |--------|----------------|
 | `cli.py` | Argument parsing, subcommand dispatch, and user-facing orchestration. |
 | `checker.py` | Decide how to check a single FOD and run the chosen strategy. |
-| `nix.py` | Run `nix derivation show`, `nix build`, and extract FODs from Nix JSON. |
+| `nix.py` | Run `nix derivation show`, `nix build --dry-run`, and extract FODs from Nix JSON. |
 | `swh.py` | Software Heritage Web API client. |
 | `swhid.py` | Compute SWHIDs with the `swh identify` command. |
 | `disarchive.py` | Unpack archives and capture GNU Guix `disarchive` specifications. |
@@ -162,6 +162,20 @@ The `outputHashMode` mapping for content SWHIDs is:
 - `git` → `"git"`
 
 If the FOD method is missing or unsupported, `swh_fod_expression` returns `None` and the result is skipped.
+
+## Building SWH-backed FODs
+
+`build-swh-fods` first generates or loads a `swh-backed-fods.nix` file, then:
+
+1. Lists the attribute names in the file.
+2. Runs `nix build --dry-run -f <file> <attrs> --json` via `nix.py:dry_run_nix_file`.
+3. Evaluates the output paths with `nix eval --json`.
+4. Skips attributes whose outputs are already in the local Nix store.
+5. Maps each remaining output path back to its derivation path using the JSON plan returned by the dry run.
+6. For vault-backed attributes, checks the Software Heritage vault flat cooking status only when the derivation path appears in the dry run's `will be built` list. Attributes that would be fetched from a substituter are not required to be cooked.
+7. Builds the remaining attributes with `nix build -f <file> <attrs>`.
+
+`nix.py:dry_run_nix_file` returns a `DryRunPlan` containing the raw JSON plan plus two sets parsed from the dry-run stderr: `will_build` (derivation paths that must be built locally) and `will_fetch` (output paths that will be fetched from a substituter).
 
 ## Checkpoint persistence
 

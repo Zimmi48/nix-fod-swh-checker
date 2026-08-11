@@ -12,6 +12,7 @@ import pty
 import re
 import subprocess
 import time
+from dataclasses import dataclass
 from typing import Callable, Iterable, Iterator
 
 from .models import FixedOutputDerivation
@@ -23,6 +24,20 @@ _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 
 class NixCommandError(RuntimeError):
     """Raised when `nix derivation show` fails or returns unparseable output."""
+
+
+@dataclass
+class DryRunPlan:
+    """Result of `nix build --dry-run --json`.
+
+    ``plan`` is the JSON list returned by Nix.  ``will_build`` is the set of
+    derivation paths that must be built locally.  ``will_fetch`` is the set of
+    output paths that will be fetched from a substituter.
+    """
+
+    plan: list[dict]
+    will_build: set[str]
+    will_fetch: set[str]
 
 
 def show_derivations_recursive(
@@ -95,6 +110,34 @@ def _normalize_derivation_keys(derivations: dict[str, object]) -> dict[str, dict
     return normalized
 
 
+def _parse_dry_run_stderr(stderr: str) -> tuple[set[str], set[str]]:
+    """Parse the stderr of `nix build --dry-run` to extract planned actions.
+
+    Returns ``(will_build, will_fetch)`` where ``will_build`` is a set of
+    derivation paths and ``will_fetch`` is a set of output paths.
+    """
+    will_build: set[str] = set()
+    will_fetch: set[str] = set()
+    section: str | None = None
+    for line in stderr.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            section = None
+            continue
+        if "will be built" in stripped and stripped.endswith(":"):
+            section = "build"
+            continue
+        if "will be fetched" in stripped and stripped.endswith(":"):
+            section = "fetch"
+            continue
+        if stripped.startswith("/nix/store/"):
+            if section == "build":
+                will_build.add(stripped)
+            elif section == "fetch":
+                will_fetch.add(stripped)
+    return will_build, will_fetch
+
+
 def dry_run_nix_file(
     path: str,
     attrs: list[str] | None = None,
@@ -103,13 +146,13 @@ def dry_run_nix_file(
     extra_args: Iterable[str] | None = None,
     on_log: Callable[[str], None] | None = None,
     no_substitute: bool = False,
-) -> list[dict]:
-    """Run `nix build --dry-run -f <path> <attrs> --json` and parse the JSON.
+) -> DryRunPlan:
+    """Run `nix build --dry-run -f <path> <attrs> --json` and parse the output.
 
-    Returns a list of ``{"drvPath": "...", "outputs": {"out": "..."}}``
-    objects describing the derivations Nix selected for the requested
-    attributes. Passing ``no_substitute=True`` adds ``--no-substitute`` so the
-    dry run ignores configured substituters.
+    Returns a :class:`DryRunPlan` containing the JSON plan plus the sets of
+    derivation paths that will be built and output paths that will be fetched.
+    Passing ``no_substitute=True`` adds ``--no-substitute`` so the dry run
+    ignores configured substituters.
     """
     cmd = [nix_binary, "build", "--dry-run", "-f", path, "--json"]
     if no_substitute:
@@ -121,9 +164,11 @@ def dry_run_nix_file(
         on_log(f"running '{' '.join(cmd)}'...")
     proc = _run_nix(cmd, nix_binary)
     try:
-        return json.loads(proc.stdout)
+        plan = json.loads(proc.stdout)
     except json.JSONDecodeError as exc:
         raise NixCommandError(f"could not parse JSON output of '{' '.join(cmd)}'") from exc
+    will_build, will_fetch = _parse_dry_run_stderr(proc.stderr or "")
+    return DryRunPlan(plan=plan, will_build=will_build, will_fetch=will_fetch)
 
 
 def build_nix_file(

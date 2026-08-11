@@ -6,6 +6,7 @@ import pytest
 
 from nix_fod_swh_checker.models import FixedOutputDerivation
 from nix_fod_swh_checker.nix import (
+    DryRunPlan,
     NixCommandError,
     build_nix_file,
     dry_run_nix_file,
@@ -432,11 +433,16 @@ def test_dry_run_nix_file_parses_json(monkeypatch):
     def fake_run(cmd, check, capture_output, text):
         assert cmd[:5] == ["nix", "build", "--dry-run", "-f", "fods.nix"]
         assert "--json" in cmd
-        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(plan), stderr="")
+        stderr = "these derivations will be built:\n  /nix/store/a.drv\n"
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(plan), stderr=stderr)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     result = dry_run_nix_file("fods.nix", ["attr1"])
-    assert result == plan
+    assert result == DryRunPlan(
+        plan=plan,
+        will_build={"/nix/store/a.drv"},
+        will_fetch=set(),
+    )
 
 
 def test_dry_run_nix_file_passes_no_substitute(monkeypatch):
@@ -446,7 +452,7 @@ def test_dry_run_nix_file_passes_no_substitute(monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     result = dry_run_nix_file("fods.nix", no_substitute=True)
-    assert result == []
+    assert result == DryRunPlan(plan=[], will_build=set(), will_fetch=set())
 
 
 def test_dry_run_nix_file_command_error(monkeypatch):
