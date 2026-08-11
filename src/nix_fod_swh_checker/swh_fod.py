@@ -26,10 +26,6 @@ _DEFAULT_NIXPKGS_URL = "https://github.com/NixOS/nixpkgs/archive/e72e4f299401a36
 _DEFAULT_NIXPKGS_SHA256 = "sha256-8fsyqeO+mJqvIzeO4xIpgJe/f7MTbbVTEC6RT6WSXNs="
 
 
-class UnsupportedSWHFodError(RuntimeError):
-    """Raised when a SWH-backed FOD cannot be generated for a result."""
-
-
 @dataclass
 class SWHFodExpression:
     """A Nix expression that builds a SWH-backed FOD.

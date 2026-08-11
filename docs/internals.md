@@ -161,7 +161,7 @@ The `outputHashMode` mapping for content SWHIDs is:
 - `nar` → `"recursive"`
 - `git` → `"git"`
 
-If the FOD method is missing or unsupported, expression generation fails with `UnsupportedSWHFodError`.
+If the FOD method is missing or unsupported, `swh_fod_expression` returns `None` and the result is skipped.
 
 ## Checkpoint persistence
 
@@ -187,5 +187,5 @@ All subcommands accept `--quiet`/`-q`. When not quiet, progress messages are emi
 - `NixCommandError` and `SWHError` are caught at subcommand boundaries and reported to stderr with exit code `1`.
 - `KeyboardInterrupt` is caught in `_run_check_command` and converted to a clean message and exit code `130`.
 - During the FOD checking loop, individual `SWHError`s are printed as warnings and the loop continues.
-- `UnsupportedSWHFodError` during expression generation is fatal for that subcommand.
+- Known results that cannot be turned into expressions are skipped with a warning.
 - Argument parsing errors exit with code `2` via `argparse`.

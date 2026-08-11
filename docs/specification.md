@@ -149,7 +149,7 @@ The generated file evaluates to a function `{ pkgs ? <pinned-nixpkgs> }: { ... }
 | Code | Meaning |
 |------|---------|
 | `0` | Success. The file is written even if it contains zero expressions. |
-| `1` | The checkpoint or JSON input could not be read, contained no results, or an expression could not be generated because a result is unsupported. |
+| `1` | The checkpoint or JSON input could not be read, or contained no results. Known results that cannot be turned into expressions are skipped with a warning but do not cause exit code `1`. |
 
 ---
 

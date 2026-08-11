@@ -21,7 +21,7 @@ from .nix import (
     show_derivations_recursive,
 )
 from .swh import DEFAULT_API_URL, SWHClient, SWHError
-from .swh_fod import UnsupportedSWHFodError, vault_swhids_for_results, write_swh_fods_nix
+from .swh_fod import vault_swhids_for_results, write_swh_fods_nix
 
 _STATUS_LABELS = {True: "KNOWN", False: "UNKNOWN", None: "UNDETERMINED"}
 
@@ -417,11 +417,7 @@ def _run_generate_command(args: argparse.Namespace) -> int:
             return 1
         results = list(checked.values())
 
-    try:
-        expressions = write_swh_fods_nix(args.output, results)
-    except UnsupportedSWHFodError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+    expressions = write_swh_fods_nix(args.output, results)
 
     print(
         f"wrote {len(expressions)} SWH-backed FOD expression(s) to {args.output}",
@@ -612,11 +608,7 @@ def _run_build_swh_fods_command(args: argparse.Namespace) -> int:
         results = _load_results_for_build(args)
         if results is None:
             return 1
-        try:
-            expressions = write_swh_fods_nix(args.output, results)
-        except UnsupportedSWHFodError as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            return 1
+        expressions = write_swh_fods_nix(args.output, results)
 
         if not expressions:
             print(
