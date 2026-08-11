@@ -124,6 +124,167 @@ def test_main_without_subcommand_exits_cleanly(capsys):
     assert "required: command" in err
 
 
+def test_check_writes_json_output_with_all_documented_fields(monkeypatch, tmp_path):
+    fod = _fod("a")
+    result = SWHCheckResult(
+        fod=fod,
+        known=True,
+        method=SWHLookupMethod.KNOWN_AFTER_DISARCHIVE,
+        detail="unpacked archive",
+        swhid="swh:1:dir:" + "b" * 40,
+        swh_url="https://archive.softwareheritage.org/swh:1:dir:" + "b" * 40,
+        disarchive_spec="(disarchive (version 0))",
+        disarchive_swhid="swh:1:dir:" + "c" * 40,
+        disarchive_top_dir="hello-1.0",
+    )
+
+    monkeypatch.setattr(cli, "show_derivations_recursive", lambda *a, **k: {})
+    monkeypatch.setattr(cli, "iter_fixed_output_derivations", lambda d: iter([fod]))
+    monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: _NullContextClient())
+    monkeypatch.setattr(cli, "check_fod", lambda *a, **k: result)
+    monkeypatch.setattr(cli, "default_checkpoint_path", lambda installable: tmp_path / "ckpt.json")
+
+    output = tmp_path / "results.json"
+    exit_code = cli.main(
+        ["check", "nixpkgs#hello", "--quiet", "--no-checkpoint", "-o", str(output)]
+    )
+    assert exit_code == 0
+
+    payload = json.loads(output.read_text())
+    assert isinstance(payload, list) and len(payload) == 1
+    entry = payload[0]
+
+    # Fields documented in the specification for JSON output.
+    assert set(entry.keys()) == {
+        "fod",
+        "known",
+        "method",
+        "detail",
+        "swhid",
+        "swh_url",
+        "disarchive_spec",
+        "disarchive_swhid",
+        "disarchive_top_dir",
+    }
+    assert entry["known"] is True
+    assert entry["method"] == "known_after_disarchive"
+    assert entry["detail"] == "unpacked archive"
+    assert entry["swhid"] == "swh:1:dir:" + "b" * 40
+    assert entry["swh_url"].startswith("https://archive.softwareheritage.org/")
+    assert entry["disarchive_spec"] == "(disarchive (version 0))"
+    assert entry["disarchive_swhid"] == "swh:1:dir:" + "c" * 40
+    assert entry["disarchive_top_dir"] == "hello-1.0"
+
+    fod_obj = entry["fod"]
+    assert set(fod_obj.keys()) == {
+        "drv_path",
+        "output_name",
+        "output_path",
+        "name",
+        "method",
+        "hash_algo",
+        "hash_hex",
+        "label",
+    }
+    assert fod_obj["drv_path"] == fod.drv_path
+    assert fod_obj["output_name"] == "out"
+    assert fod_obj["label"] == fod.label
+
+
+def test_check_only_unknown_filters_report(monkeypatch, capsys, tmp_path):
+    fod_known = _fod("known")
+    fod_unknown = _fod("unknown")
+
+    def fake_check_fod(fod, *args, **kwargs):
+        if fod.name == "known":
+            return SWHCheckResult(
+                fod=fod, known=True, method=SWHLookupMethod.CONTENT_HASH, detail="known"
+            )
+        return SWHCheckResult(
+            fod=fod, known=False, method=SWHLookupMethod.CONTENT_HASH, detail="not known"
+        )
+
+    monkeypatch.setattr(cli, "show_derivations_recursive", lambda *a, **k: {})
+    monkeypatch.setattr(
+        cli, "iter_fixed_output_derivations", lambda d: iter([fod_known, fod_unknown])
+    )
+    monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: _NullContextClient())
+    monkeypatch.setattr(cli, "check_fod", fake_check_fod)
+    monkeypatch.setattr(cli, "default_checkpoint_path", lambda installable: tmp_path / "ckpt.json")
+
+    exit_code = cli.main(
+        ["check", "nixpkgs#hello", "--quiet", "--no-checkpoint", "--only-unknown"]
+    )
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    # The unknown FOD's label contains "/nix/store/unknown.drv", so "KNOWN"
+    # must not appear as a status label.
+    assert "[KNOWN]" not in out
+    assert "[UNKNOWN]" in out
+    # The summary still counts all FODs that were checked, even though only
+    # unknown ones are printed.
+    assert "1 FOD(s) checked: 0 known, 0 known after disarchive, 1 unknown, 0 undetermined" in out
+
+
+def test_check_no_fods_found_returns_zero(monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(cli, "show_derivations_recursive", lambda *a, **k: {})
+    monkeypatch.setattr(cli, "iter_fixed_output_derivations", lambda d: iter([]))
+
+    exit_code = cli.main(["check", "nixpkgs#hello", "--quiet", "--no-checkpoint"])
+    err = capsys.readouterr().err
+    assert exit_code == 0
+    assert "no fixed-output derivations found" in err
+
+
+def test_check_resumes_from_existing_checkpoint(monkeypatch, capsys, tmp_path):
+    fod_a = _fod("a")
+    fod_b = _fod("b")
+    existing = SWHCheckResult(
+        fod=fod_a, known=True, method=SWHLookupMethod.CONTENT_HASH, detail="known"
+    )
+    checkpoint = tmp_path / "ckpt.json"
+    from nix_fod_swh_checker.checkpoint import save_checkpoint
+
+    save_checkpoint(checkpoint, "nixpkgs#hello", {fod_a.label: existing})
+
+    checked: list[str] = []
+
+    def fake_check_fod(fod, *args, **kwargs):
+        checked.append(fod.label)
+        return SWHCheckResult(
+            fod=fod, known=False, method=SWHLookupMethod.CONTENT_HASH, detail="not known"
+        )
+
+    monkeypatch.setattr(cli, "show_derivations_recursive", lambda *a, **k: {})
+    monkeypatch.setattr(cli, "iter_fixed_output_derivations", lambda d: iter([fod_a, fod_b]))
+    monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: _NullContextClient())
+    monkeypatch.setattr(cli, "check_fod", fake_check_fod)
+
+    exit_code = cli.main(
+        ["check", "nixpkgs#hello", "--checkpoint-file", str(checkpoint), "--quiet"]
+    )
+    assert exit_code == 0
+    assert checked == [fod_b.label]
+
+
+def test_check_swh_error_in_loop_is_warning_not_fatal(monkeypatch, capsys, tmp_path):
+    fod = _fod("a")
+
+    def fake_check_fod(*args, **kwargs):
+        raise cli.SWHError("API down")
+
+    monkeypatch.setattr(cli, "show_derivations_recursive", lambda *a, **k: {})
+    monkeypatch.setattr(cli, "iter_fixed_output_derivations", lambda d: iter([fod]))
+    monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: _NullContextClient())
+    monkeypatch.setattr(cli, "check_fod", fake_check_fod)
+
+    exit_code = cli.main(["check", "nixpkgs#hello", "--quiet", "--no-checkpoint"])
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "warning: API down" in captured.err
+    assert "nothing to report" in captured.out
+
+
 def test_print_report_shows_known_after_disarchive_separately(capsys):
     fod = _fod("a")
     results = [
@@ -594,7 +755,7 @@ def test_generate_swh_fods_round_trips_json_input_with_label(monkeypatch, tmp_pa
 
     written = []
 
-    def fake_write_swh_fods_nix(path, results):
+    def fake_write_swh_fods_nix(path, results, *, on_log=None):
         written.append((path, results))
         return []
 
@@ -611,6 +772,108 @@ def test_generate_swh_fods_round_trips_json_input_with_label(monkeypatch, tmp_pa
     reloaded = written[0][1]
     assert len(reloaded) == 1
     assert reloaded[0].fod == result.fod
+
+
+def test_generate_swh_fods_reads_default_checkpoint(monkeypatch, capsys, tmp_path):
+    result = SWHCheckResult(
+        fod=_fod("a"),
+        known=True,
+        method=SWHLookupMethod.CONTENT_HASH,
+        detail="known",
+        swhid="swh:1:cnt:" + "b" * 40,
+    )
+    checkpoint = tmp_path / "ckpt.json"
+    from nix_fod_swh_checker.checkpoint import save_checkpoint
+
+    save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
+
+    written = []
+    monkeypatch.setattr(
+        cli,
+        "write_swh_fods_nix",
+        lambda path, results, *, on_log=None: written.append((path, results)) or [],
+    )
+    monkeypatch.setattr(cli, "default_checkpoint_path", lambda installable: checkpoint)
+
+    output = tmp_path / "out.nix"
+    exit_code = cli.main(["generate-swh-fods", "nixpkgs#hello", "-o", str(output)])
+    assert exit_code == 0
+    assert len(written) == 1
+    assert written[0][0] == str(output)
+    assert len(written[0][1]) == 1
+
+
+def test_generate_swh_fods_empty_checkpoint_returns_error(capsys, tmp_path):
+    checkpoint = tmp_path / "ckpt.json"
+    checkpoint.write_text('{"installable": "nixpkgs#hello", "results": {}}')
+
+    exit_code = cli.main(
+        ["generate-swh-fods", "nixpkgs#hello", "--checkpoint-file", str(checkpoint)]
+    )
+    err = capsys.readouterr().err
+    assert exit_code == 1
+    assert "no checkpoint found" in err
+
+
+def test_generate_swh_fods_warns_and_skips_inexpressible_results(monkeypatch, capsys, tmp_path):
+    """Known results that cannot be turned into expressions are skipped with a warning."""
+    result = SWHCheckResult(
+        fod=_fod("a"),
+        known=True,
+        method=SWHLookupMethod.SWHID_KNOWN,
+        detail="known",
+        swhid="swh:1:cnt:" + "b" * 40,
+    )
+    checkpoint = tmp_path / "ckpt.json"
+    from nix_fod_swh_checker.checkpoint import save_checkpoint
+
+    save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
+
+    import nix_fod_swh_checker.swh_fod as swh_fod_module
+
+    monkeypatch.setattr(swh_fod_module, "swh_fod_expression", lambda r: None)
+
+    exit_code = cli.main(
+        ["generate-swh-fods", "nixpkgs#hello", "--checkpoint-file", str(checkpoint)]
+    )
+    err = capsys.readouterr().err
+    assert exit_code == 0
+    assert "warning" in err
+    assert "cannot be turned into" in err
+    assert "wrote 0 SWH-backed FOD expression(s)" in err
+
+
+def test_generate_swh_fods_warns_via_write_swh_fods_nix(monkeypatch, capsys, tmp_path):
+    """The warning for inexpressible results is emitted by write_swh_fods_nix."""
+    result = SWHCheckResult(
+        fod=_fod("a"),
+        known=True,
+        method=SWHLookupMethod.SWHID_KNOWN,
+        detail="known",
+        swhid="swh:1:cnt:" + "b" * 40,
+    )
+    checkpoint = tmp_path / "ckpt.json"
+    from nix_fod_swh_checker.checkpoint import save_checkpoint
+
+    save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
+
+    def fake_write_swh_fods_nix(path, results, *, on_log=None):
+        if on_log:
+            on_log(
+                f"warning: {results[0].fod.label} is known to Software Heritage "
+                "(method=swhid_known) but cannot be turned into a SWH-backed FOD expression"
+            )
+        return []
+
+    monkeypatch.setattr(cli, "write_swh_fods_nix", fake_write_swh_fods_nix)
+
+    exit_code = cli.main(
+        ["generate-swh-fods", "nixpkgs#hello", "--checkpoint-file", str(checkpoint)]
+    )
+    err = capsys.readouterr().err
+    assert exit_code == 0
+    assert "warning" in err
+    assert "cannot be turned into" in err
 
 
 def test_build_swh_fods_passes_no_substitute(monkeypatch, capsys, tmp_path):
@@ -642,3 +905,126 @@ def test_build_swh_fods_passes_no_substitute(monkeypatch, capsys, tmp_path):
     assert built == [(str(nix_file), ["a"], {"extra_args": ["--no-substitute"], "on_log": None})]
     assert dry_run_calls[0][2]["no_substitute"] is True
     assert "--no-substitute" not in dry_run_calls[0][2]["extra_args"]
+
+
+def test_build_swh_fods_passes_extra_nix_build_args(monkeypatch, capsys, tmp_path):
+    nix_file = tmp_path / "swh-backed-fods.nix"
+    nix_file.write_text('{ pkgs ? {} }: { "a" = builtins.fetchurl { url = "u"; }; }\n')
+
+    built = []
+    dry_run_calls = []
+
+    def fake_build_nix_file(path, attrs=None, **kwargs):
+        built.append((path, attrs, kwargs))
+
+    def fake_dry_run_nix_file(path, attrs, **kwargs):
+        dry_run_calls.append((path, attrs, kwargs))
+        return DryRunPlan(plan=[], will_build=set(), will_fetch=set())
+
+    monkeypatch.setattr(cli, "build_nix_file", fake_build_nix_file)
+    monkeypatch.setattr(cli, "dry_run_nix_file", fake_dry_run_nix_file)
+    monkeypatch.setattr(cli, "_list_attrs_in_nix_file", lambda path: ["a"])
+    monkeypatch.setattr(
+        cli, "_eval_nix_file_outputs", lambda path: {"a": "/nix/store/out-a"}
+    )
+    monkeypatch.setattr(cli, "_extract_vault_swhids_by_attr", lambda path: {})
+    monkeypatch.setattr(cli.os.path, "exists", lambda path: False)
+
+    exit_code = cli.main(
+        [
+            "build-swh-fods",
+            str(nix_file),
+            "--quiet",
+            "--nix-build-arg",
+            "--option sandbox false",
+        ]
+    )
+    assert exit_code == 0
+    assert dry_run_calls[0][2]["extra_args"] == ["--option sandbox false"]
+    assert built == [
+        (str(nix_file), ["a"], {"extra_args": ["--option sandbox false"], "on_log": None})
+    ]
+
+
+def test_build_swh_fods_reports_dry_run_failure(monkeypatch, capsys, tmp_path):
+    nix_file = tmp_path / "swh-backed-fods.nix"
+    nix_file.write_text('{ pkgs ? {} }: { "a" = builtins.fetchurl { url = "u"; }; }\n')
+
+    def fake_dry_run_nix_file(*args, **kwargs):
+        raise cli.NixCommandError("dry run failed")
+
+    monkeypatch.setattr(cli, "dry_run_nix_file", fake_dry_run_nix_file)
+    monkeypatch.setattr(cli, "_list_attrs_in_nix_file", lambda path: ["a"])
+    monkeypatch.setattr(
+        cli, "_eval_nix_file_outputs", lambda path: {"a": "/nix/store/out-a"}
+    )
+
+    exit_code = cli.main(["build-swh-fods", str(nix_file), "--quiet"])
+    err = capsys.readouterr().err
+    assert exit_code == 1
+    assert "dry run failed" in err
+
+
+def test_build_swh_fods_reports_swh_error_during_vault_check(monkeypatch, capsys, tmp_path):
+    dir_swhid = "swh:1:dir:" + "b" * 40
+    nix_file = tmp_path / "swh-backed-fods.nix"
+    nix_file.write_text(
+        f'{{ pkgs ? {{}} }}: {{ "a" = pkgs.runCommand "x" {{}} "curl https://archive.softwareheritage.org/api/1/vault/flat/{dir_swhid}/raw"; }}\n'
+    )
+
+    monkeypatch.setattr(
+        cli,
+        "dry_run_nix_file",
+        lambda *a, **k: DryRunPlan(
+            plan=[{"outputs": {"out": "/nix/store/out-a"}, "drvPath": "/nix/store/a.drv"}],
+            will_build={"/nix/store/a.drv"},
+            will_fetch=set(),
+        ),
+    )
+    monkeypatch.setattr(cli, "_list_attrs_in_nix_file", lambda path: ["a"])
+    monkeypatch.setattr(
+        cli, "_eval_nix_file_outputs", lambda path: {"a": "/nix/store/out-a"}
+    )
+    monkeypatch.setattr(cli, "_extract_vault_swhids_by_attr", lambda path: {"a": dir_swhid})
+    monkeypatch.setattr(cli.os.path, "exists", lambda path: False)
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+        def get_vault_flat_task(self, swhid):
+            raise cli.SWHError("API down")
+
+    monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: FakeClient())
+
+    exit_code = cli.main(["build-swh-fods", str(nix_file), "--quiet"])
+    err = capsys.readouterr().err
+    assert exit_code == 1
+    assert "API down" in err
+
+
+def test_build_swh_fods_all_outputs_already_present(monkeypatch, capsys, tmp_path):
+    nix_file = tmp_path / "swh-backed-fods.nix"
+    nix_file.write_text('{ pkgs ? {} }: { "a" = builtins.fetchurl { url = "u"; }; }\n')
+
+    built = []
+    monkeypatch.setattr(cli, "build_nix_file", lambda *a, **k: built.append(True))
+    monkeypatch.setattr(
+        cli,
+        "dry_run_nix_file",
+        lambda *a, **k: DryRunPlan(plan=[], will_build=set(), will_fetch=set()),
+    )
+    monkeypatch.setattr(cli, "_list_attrs_in_nix_file", lambda path: ["a"])
+    monkeypatch.setattr(
+        cli, "_eval_nix_file_outputs", lambda path: {"a": "/nix/store/out-a"}
+    )
+    monkeypatch.setattr(cli.os.path, "exists", lambda path: path == "/nix/store/out-a")
+
+    exit_code = cli.main(["build-swh-fods", str(nix_file), "--quiet"])
+    err = capsys.readouterr().err
+    assert exit_code == 0
+    assert "already in the Nix store" in err
+    assert built == []

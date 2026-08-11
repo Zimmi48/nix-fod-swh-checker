@@ -462,3 +462,57 @@ def test_dry_run_nix_file_command_error(monkeypatch):
     monkeypatch.setattr(subprocess, "run", fake_run)
     with pytest.raises(NixCommandError, match="dry run failed"):
         dry_run_nix_file("fods.nix")
+
+
+def test_dry_run_nix_file_parses_fetched_paths(monkeypatch):
+    stderr = (
+        "these derivations will be built:\n"
+        "  /nix/store/a.drv\n"
+        "\n"
+        "these paths will be fetched (0.00 MiB download, 0.00 MiB unpacked):\n"
+        "  /nix/store/fetched-out\n"
+    )
+
+    def fake_run(cmd, check, capture_output, text):
+        return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr=stderr)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = dry_run_nix_file("fods.nix", ["attr1"])
+    assert result.will_build == {"/nix/store/a.drv"}
+    assert result.will_fetch == {"/nix/store/fetched-out"}
+
+
+def test_dry_run_nix_file_passes_extra_args(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, check, capture_output, text):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    dry_run_nix_file("fods.nix", ["attr1"], extra_args=["--option", "sandbox", "false"])
+    assert "--option" in calls[0]
+    assert "sandbox" in calls[0]
+    assert "false" in calls[0]
+
+
+def test_eval_nix_file_outputs_parses_json(monkeypatch):
+    from nix_fod_swh_checker.cli import _eval_nix_file_outputs
+
+    def fake_run(cmd, check, capture_output, text):
+        assert cmd[:5] == ["nix", "eval", "--json", "-f", "fods.nix"]
+        return subprocess.CompletedProcess(cmd, 0, stdout='{"a": "/nix/store/out-a"}', stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert _eval_nix_file_outputs("fods.nix") == {"a": "/nix/store/out-a"}
+
+
+def test_eval_nix_file_outputs_command_error(monkeypatch):
+    from nix_fod_swh_checker.cli import _eval_nix_file_outputs
+
+    def fake_run(cmd, check, capture_output, text):
+        raise subprocess.CalledProcessError(1, cmd, stderr="error: syntax error")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(NixCommandError, match="syntax error"):
+        _eval_nix_file_outputs("fods.nix")

@@ -79,6 +79,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="path to a JSON file containing check results (as produced by 'check -o')",
     )
+    generate_parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="do not print progress messages to stderr while generating",
+    )
 
     cook_parser = subparsers.add_parser(
         "cook-swh-fods",
@@ -417,7 +423,8 @@ def _run_generate_command(args: argparse.Namespace) -> int:
             return 1
         results = list(checked.values())
 
-    expressions = write_swh_fods_nix(args.output, results)
+    on_log = None if args.quiet else _log_to_stderr
+    expressions = write_swh_fods_nix(args.output, results, on_log=on_log)
 
     print(
         f"wrote {len(expressions)} SWH-backed FOD expression(s) to {args.output}",

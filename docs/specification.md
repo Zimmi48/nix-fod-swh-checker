@@ -143,6 +143,7 @@ The generated file evaluates to a function `{ pkgs ? <pinned-nixpkgs> }: { ... }
 | `-o`, `--output` `<path>` | `swh-backed-fods.nix` | Path to write the generated Nix expression. Overwritten if it exists. |
 | `--checkpoint-file` `<path>` | per-installable cache file | Checkpoint to read results from. Ignored when `-i` is used. |
 | `-i`, `--json-input` `<path>` | none | Read results from a JSON file produced by `check -o`. |
+| `-q`, `--quiet` | false | Suppress stderr progress messages. Warnings and errors are still printed. |
 
 #### `generate-swh-fods` exit codes
 
