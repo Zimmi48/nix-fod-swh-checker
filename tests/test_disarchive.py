@@ -156,3 +156,30 @@ def test_try_disarchive_unknown_directory_swhid(monkeypatch, tmp_path):
     assert result.method == SWHLookupMethod.KNOWN_AFTER_DISARCHIVE
     assert result.swhid == swhid
     assert result.swh_url is None
+
+
+def test_try_disarchive_disarchive_failure_is_unsupported(monkeypatch, tmp_path):
+    swhid = "swh:1:dir:" + "d" * 40
+    archive = _make_tar_archive(tmp_path, [("src/file.txt", "hello")])
+
+    monkeypatch.setattr(
+        disarchive_module, "realise_fod", lambda fod, *, nix_binary, on_log=None: str(archive)
+    )
+    monkeypatch.setattr(
+        disarchive_module,
+        "compute_swhid",
+        lambda path, *, swh_binary, on_log=None, timeout=None: swhid,
+    )
+
+    def fail_disassemble(*args, **kwargs):
+        raise DisarchiveError("disarchive binary not found")
+
+    monkeypatch.setattr(disarchive_module, "disassemble_archive", fail_disassemble)
+
+    client = FakeSWHClient(known_swhids={swhid: True})
+    result = try_disarchive(make_fod(), client)
+    assert isinstance(result, SWHCheckResult)
+    assert result.known is None
+    assert result.method == SWHLookupMethod.UNSUPPORTED
+    assert result.swhid == swhid
+    assert "disarchive failed" in result.detail

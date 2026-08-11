@@ -69,8 +69,9 @@ def try_disarchive(
     If that SWHID is not known to Software Heritage, the archive contents are
     not archived and there is no point in capturing a disarchive specification,
     so the slow ``disarchive disassemble`` step is skipped. If the stripped
-    SWHID is known but disarchive times out, the result is reported as
-    undetermined so the user knows the specification is missing.
+    SWHID is known but ``disarchive disassemble`` fails or times out, the
+    result is reported as ``UNSUPPORTED`` so the user knows the specification
+    is missing.
     """
     try:
         archive_path = realise_fod(fod, nix_binary=nix_binary, on_log=on_log)
@@ -145,13 +146,22 @@ def try_disarchive(
             swhid=stripped_swhid,
             swh_url=f"{_ARCHIVE_URL}/{stripped_swhid}",
         )
-    except DisarchiveError:
-        # Other disarchive failures (e.g. binary missing) are not fatal: the
-        # stripped contents are still known, we just cannot reconstruct the
-        # exact original archive from a spec.
-        spec = None
+    except DisarchiveError as exc:
+        # Without a disarchive specification we cannot reconstruct the exact
+        # original archive, so the result is not usable for a SWH-backed FOD.
+        _cleanup(unpacked_path)
+        if on_log:
+            on_log(f"disarchive failed for {archive_path}: {exc}")
+        return SWHCheckResult(
+            fod=fod,
+            known=None,
+            method=SWHLookupMethod.UNSUPPORTED,
+            detail=f"contents known as {stripped_swhid} but disarchive failed before capturing the spec",
+            swhid=stripped_swhid,
+            swh_url=f"{_ARCHIVE_URL}/{stripped_swhid}",
+        )
 
-    disarchive_swhid = _extract_disarchive_swhid(spec) if spec else None
+    disarchive_swhid = _extract_disarchive_swhid(spec)
     disarchive_known = (
         client.lookup_known_swhids([disarchive_swhid]).get(disarchive_swhid, False)
         if disarchive_swhid
