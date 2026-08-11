@@ -436,13 +436,25 @@ def write_swh_fods_nix(
 ) -> list[SWHFodExpression]:
     """Write a Nix expression with SWH-backed FODs for all known results.
 
+    The tool aims to cover every known FOD.  When a known result cannot be
+    turned into a SWH-backed expression, a warning is emitted so the gap is
+    visible rather than silently ignored.
+
     Returns the list of expressions that were written.
     """
     expressions: list[SWHFodExpression] = []
     for result in results:
+        if not result.known:
+            continue
         expr = swh_fod_expression(result)
         if expr is not None:
             expressions.append(expr)
+        elif on_log:
+            on_log(
+                f"warning: {result.fod.label} is known to Software Heritage "
+                f"(method={result.method.value}) but cannot be turned into a "
+                "SWH-backed FOD expression"
+            )
 
     with open(path, "w") as f:
         f.write(swh_fods_expression(expressions))

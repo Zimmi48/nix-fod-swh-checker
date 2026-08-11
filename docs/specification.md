@@ -131,7 +131,8 @@ The command reads results from either:
 - the checkpoint file for `<installable>` (default), or
 - the JSON file given with `-i`/`--json-input`.
 
-For every result whose `known` field is `true`, it attempts to produce a Nix expression that downloads the same content from Software Heritage. Unsupported results are silently skipped.
+For every result whose `known` field is `true`, it attempts to produce a Nix expression that downloads the same content from Software Heritage.
+If a known result cannot be turned into an expression (for example, because its content-addressing method cannot be mapped to a Nix `outputHashMode`, or a disarchive result is missing required metadata), a warning is printed to stderr and the result is skipped.
 
 The generated file evaluates to a function `{ pkgs ? <pinned-nixpkgs> }: { ... }` mapping safe attribute names to SWH-backed derivations. See [Generated Nix expression](internals.md#generated-nix-expression) for the exact format.
 
