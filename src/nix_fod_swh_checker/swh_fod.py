@@ -44,7 +44,7 @@ def vault_swhids_for_results(results: list[SWHCheckResult]) -> set[str]:
 
     Vault flat bundles are only needed for directory-backed expressions
     (``swh:1:dir:...``). Single files are fetched via the ``/content/``
-    endpoint and do not require pre-cooking. Unknown or unsupported results
+    endpoint and do not require pre-cooking. Unknown or undetermined results
     are ignored.
     """
     vault_swhids = set()
@@ -60,7 +60,7 @@ def vault_swhids_for_results(results: list[SWHCheckResult]) -> set[str]:
 
 
 def swh_fod_expression(result: SWHCheckResult) -> SWHFodExpression | None:
-    """Return a Nix expression for a SWH-backed FOD, or None if unsupported.
+    """Return a Nix expression for a SWH-backed FOD, or None if undetermined.
 
     Supported cases:
 

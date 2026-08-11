@@ -224,8 +224,8 @@ def test_unknown_result_returns_none():
     assert swh_fod_expression(result) is None
 
 
-def test_unsupported_method_returns_none():
-    result = make_result(method=SWHLookupMethod.UNSUPPORTED)
+def test_undetermined_method_returns_none():
+    result = make_result(method=SWHLookupMethod.UNDETERMINED)
     assert swh_fod_expression(result) is None
 
 
@@ -346,6 +346,6 @@ def test_vault_swhids_for_unknown_result_returns_empty():
     assert vault_swhids_for_results([result]) == set()
 
 
-def test_vault_swhids_for_unsupported_method_returns_empty():
-    result = make_result(method=SWHLookupMethod.UNSUPPORTED)
+def test_vault_swhids_for_undetermined_method_returns_empty():
+    result = make_result(method=SWHLookupMethod.UNDETERMINED)
     assert vault_swhids_for_results([result]) == set()

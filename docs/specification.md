@@ -95,7 +95,7 @@ When `-o`/`--output` is given, the file contains a JSON array of result objects.
 |-------|------|-------------|
 | `fod` | object | The checked FOD. See [FOD object](#fod-object). |
 | `known` | boolean or `null` | `true` if known, `false` if not known, `null` if undetermined. |
-| `method` | string | One of `content_hash`, `swhid_known`, `build_and_identify`, `known_after_disarchive`, `unsupported`. |
+| `method` | string | One of `content_hash`, `swhid_known`, `build_and_identify`, `known_after_disarchive`, `undetermined`. |
 | `detail` | string | Human-readable explanation of the result. |
 | `swhid` | string or `null` | The Software Heritage persistent identifier, if one was computed or looked up. |
 | `swh_url` | string or `null` | URL of the object on `https://archive.softwareheritage.org`, if known. |

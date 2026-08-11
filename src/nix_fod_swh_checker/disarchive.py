@@ -70,7 +70,7 @@ def try_disarchive(
     not archived and there is no point in capturing a disarchive specification,
     so the slow ``disarchive disassemble`` step is skipped. If the stripped
     SWHID is known but ``disarchive disassemble`` fails or times out, the
-    result is reported as ``UNSUPPORTED`` so the user knows the specification
+    result is reported as ``UNDETERMINED`` so the user knows the specification
     is missing.
     """
     try:
@@ -110,7 +110,7 @@ def try_disarchive(
         return SWHCheckResult(
             fod=fod,
             known=None,
-            method=SWHLookupMethod.UNSUPPORTED,
+            method=SWHLookupMethod.UNDETERMINED,
             detail=f"unpacked {archive_path} but could not compute its SWHID: {exc}",
         )
 
@@ -141,7 +141,7 @@ def try_disarchive(
         return SWHCheckResult(
             fod=fod,
             known=None,
-            method=SWHLookupMethod.UNSUPPORTED,
+            method=SWHLookupMethod.UNDETERMINED,
             detail=f"contents known as {stripped_swhid} but disarchive timed out before capturing the spec",
             swhid=stripped_swhid,
             swh_url=f"{_ARCHIVE_URL}/{stripped_swhid}",
@@ -155,7 +155,7 @@ def try_disarchive(
         return SWHCheckResult(
             fod=fod,
             known=None,
-            method=SWHLookupMethod.UNSUPPORTED,
+            method=SWHLookupMethod.UNDETERMINED,
             detail=f"contents known as {stripped_swhid} but disarchive failed before capturing the spec",
             swhid=stripped_swhid,
             swh_url=f"{_ARCHIVE_URL}/{stripped_swhid}",

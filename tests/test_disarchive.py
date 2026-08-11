@@ -158,7 +158,7 @@ def test_try_disarchive_unknown_directory_swhid(monkeypatch, tmp_path):
     assert result.swh_url is None
 
 
-def test_try_disarchive_disarchive_failure_is_unsupported(monkeypatch, tmp_path):
+def test_try_disarchive_disarchive_failure_is_undetermined(monkeypatch, tmp_path):
     swhid = "swh:1:dir:" + "d" * 40
     archive = _make_tar_archive(tmp_path, [("src/file.txt", "hello")])
 
@@ -180,6 +180,6 @@ def test_try_disarchive_disarchive_failure_is_unsupported(monkeypatch, tmp_path)
     result = try_disarchive(make_fod(), client)
     assert isinstance(result, SWHCheckResult)
     assert result.known is None
-    assert result.method == SWHLookupMethod.UNSUPPORTED
+    assert result.method == SWHLookupMethod.UNDETERMINED
     assert result.swhid == swhid
     assert "disarchive failed" in result.detail

@@ -130,7 +130,7 @@ def test_check_fod_nar_method_build_failure_is_undetermined(monkeypatch):
     client = FakeSWHClient()
     result = check_fod(fod, client)
     assert result.known is None
-    assert result.method == SWHLookupMethod.UNSUPPORTED
+    assert result.method == SWHLookupMethod.UNDETERMINED
     assert "boom" in result.detail
 
 
@@ -149,7 +149,7 @@ def test_check_fod_nar_method_identify_failure_is_undetermined(monkeypatch):
     client = FakeSWHClient()
     result = check_fod(fod, client)
     assert result.known is None
-    assert result.method == SWHLookupMethod.UNSUPPORTED
+    assert result.method == SWHLookupMethod.UNDETERMINED
     assert "boom" in result.detail
 
 

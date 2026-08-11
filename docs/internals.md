@@ -50,7 +50,7 @@ Outcome of checking one FOD:
 - `SWHID_KNOWN` — direct batch lookup of a git-style SWHID (`/known/`).
 - `BUILD_AND_IDENTIFY` — realise the FOD, run `swh identify`, then look up the computed SWHID.
 - `KNOWN_AFTER_DISARCHIVE` — the raw FOD is not known, but its unpacked contents are known as a directory.
-- `UNSUPPORTED` — the check could not be completed.
+- `UNDETERMINED` — the check could not be completed.
 
 ## Extracting FODs from Nix
 
@@ -88,7 +88,7 @@ Used for all other methods (most commonly `nar`). The FOD is realised with:
 nix build --no-link --print-out-paths <drv>^<output>
 ```
 
-This fetches from substituters when possible. The resulting store path is passed to `swh identify --no-filename <path>` to compute its intrinsic SWHID, which is then looked up via `POST /known/`. Failures to realise or identify are reported as `UNSUPPORTED` / `known=None`.
+This fetches from substituters when possible. The resulting store path is passed to `swh identify --no-filename <path>` to compute its intrinsic SWHID, which is then looked up via `POST /known/`. Failures to realise or identify are reported as `UNDETERMINED` / `known=None`.
 
 ### `try_disarchive`
 
@@ -104,7 +104,7 @@ When a `git` or `flat` FOD is not directly known, `disarchive.py:try_disarchive`
 8. If the disarchive specification contains its own directory SWHID, look that up too.
 9. Report `KNOWN_AFTER_DISARCHIVE` if either SWHID is known; otherwise report `UNKNOWN`.
 
-If `swh identify` fails or times out after unpacking, the result is `UNSUPPORTED`. If `disarchive disassemble` fails or times out, the result is also `UNSUPPORTED`, but the stripped SWHID and URL are preserved: without a disarchive specification the exact original archive cannot be reconstructed, so the result cannot be turned into a SWH-backed FOD.
+If `swh identify` fails or times out after unpacking, the result is `UNDETERMINED`. If `disarchive disassemble` fails or times out, the result is also `UNDETERMINED`, but the stripped SWHID and URL are preserved: without a disarchive specification the exact original archive cannot be reconstructed, so the result cannot be turned into a SWH-backed FOD.
 
 The reported SWHID prefers the disarchive SWHID when it is known, because that is the directory `disarchive assemble` can rebuild from directly. Otherwise the stripped SWHID is used.
 

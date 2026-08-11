@@ -12,7 +12,7 @@ class SWHLookupMethod(str, Enum):
     SWHID_KNOWN = "swhid_known"
     BUILD_AND_IDENTIFY = "build_and_identify"
     KNOWN_AFTER_DISARCHIVE = "known_after_disarchive"
-    UNSUPPORTED = "unsupported"
+    UNDETERMINED = "undetermined"
 
 
 @dataclass

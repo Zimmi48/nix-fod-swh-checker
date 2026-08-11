@@ -194,7 +194,7 @@ def _check_via_build_and_identify(
         return SWHCheckResult(
             fod=fod,
             known=None,
-            method=SWHLookupMethod.UNSUPPORTED,
+            method=SWHLookupMethod.UNDETERMINED,
             detail=f"could not realise FOD to compute its SWHID: {exc}",
         )
 
@@ -209,7 +209,7 @@ def _check_via_build_and_identify(
         return SWHCheckResult(
             fod=fod,
             known=None,
-            method=SWHLookupMethod.UNSUPPORTED,
+            method=SWHLookupMethod.UNDETERMINED,
             detail=f"built {out_path} but could not compute its SWHID: {exc}",
         )
 
