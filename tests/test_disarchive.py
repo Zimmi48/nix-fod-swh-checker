@@ -1,4 +1,5 @@
 import io
+import shutil
 import tarfile
 import zipfile
 from pathlib import Path
@@ -13,7 +14,13 @@ from nix_fod_swh_checker.disarchive import (
 )
 from nix_fod_swh_checker.models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
 from nix_fod_swh_checker.nix import NixCommandError
-from nix_fod_swh_checker.swh import ContentLookupResult
+
+
+# Directory SWHID for a tree containing a single file ``file.txt`` with the
+# bytes ``b"hello"``, as computed by ``swh identify --no-filename``.
+KNOWN_DIRECTORY_SWHID = "swh:1:dir:952dd0a0ff0d34ef3f52035c658e1d1ed56fd0c1"
+
+DISARCHIVE_AVAILABLE = shutil.which("disarchive") is not None
 
 
 def make_fod(**overrides):
@@ -114,39 +121,11 @@ def test_try_disarchive_returns_none_when_unpack_fails(monkeypatch, tmp_path):
     assert result is None
 
 
-def test_try_disarchive_known_directory_swhid(monkeypatch, tmp_path):
-    swhid = "swh:1:dir:" + "b" * 40
-    archive = _make_tar_archive(tmp_path, [("src/file.txt", "hello")])
-
-    monkeypatch.setattr(
-        disarchive_module, "realise_fod", lambda fod, *, nix_binary, on_log=None: str(archive)
-    )
-    monkeypatch.setattr(
-        disarchive_module,
-        "compute_swhid",
-        lambda path, *, swh_binary, on_log=None, timeout=None: swhid,
-    )
-
-    client = FakeSWHClient(known_swhids={swhid: True})
-    result = try_disarchive(make_fod(), client)
-    assert isinstance(result, SWHCheckResult)
-    assert result.known is True
-    assert result.method == SWHLookupMethod.KNOWN_AFTER_DISARCHIVE
-    assert result.swhid == swhid
-    assert result.swh_url == f"https://archive.softwareheritage.org/{swhid}"
-
-
 def test_try_disarchive_unknown_directory_swhid(monkeypatch, tmp_path):
-    swhid = "swh:1:dir:" + "c" * 40
     archive = _make_tar_archive(tmp_path, [("src/file.txt", "hello")])
 
     monkeypatch.setattr(
         disarchive_module, "realise_fod", lambda fod, *, nix_binary, on_log=None: str(archive)
-    )
-    monkeypatch.setattr(
-        disarchive_module,
-        "compute_swhid",
-        lambda path, *, swh_binary, on_log=None, timeout=None: swhid,
     )
 
     client = FakeSWHClient()
@@ -154,32 +133,52 @@ def test_try_disarchive_unknown_directory_swhid(monkeypatch, tmp_path):
     assert isinstance(result, SWHCheckResult)
     assert result.known is False
     assert result.method == SWHLookupMethod.KNOWN_AFTER_DISARCHIVE
-    assert result.swhid == swhid
+    assert result.swhid == KNOWN_DIRECTORY_SWHID
     assert result.swh_url is None
+    # The client was asked about the real directory SWHID.
+    assert client.known_calls == [[KNOWN_DIRECTORY_SWHID]]
 
 
-def test_try_disarchive_disarchive_failure_is_undetermined(monkeypatch, tmp_path):
-    swhid = "swh:1:dir:" + "d" * 40
+@pytest.mark.skipif(
+    not DISARCHIVE_AVAILABLE,
+    reason="disarchive binary is not available in this environment",
+)
+def test_try_disarchive_known_directory_swhid(monkeypatch, tmp_path):
     archive = _make_tar_archive(tmp_path, [("src/file.txt", "hello")])
 
     monkeypatch.setattr(
         disarchive_module, "realise_fod", lambda fod, *, nix_binary, on_log=None: str(archive)
     )
+
+    client = FakeSWHClient(known_swhids={KNOWN_DIRECTORY_SWHID: True})
+    result = try_disarchive(make_fod(), client)
+    assert isinstance(result, SWHCheckResult)
+    assert result.known is True
+    assert result.method == SWHLookupMethod.KNOWN_AFTER_DISARCHIVE
+    # The stripped SWHID is known, so it is reported unless disarchive's own
+    # SWHID is also known.
+    assert result.swhid == KNOWN_DIRECTORY_SWHID
+    assert result.swh_url == f"https://archive.softwareheritage.org/{KNOWN_DIRECTORY_SWHID}"
+    assert result.disarchive_spec is not None
+    assert result.disarchive_spec.strip()
+    assert result.disarchive_top_dir == "src"
+
+
+def test_try_disarchive_disarchive_failure_is_undetermined(monkeypatch, tmp_path):
+    archive = _make_tar_archive(tmp_path, [("src/file.txt", "hello")])
+
     monkeypatch.setattr(
-        disarchive_module,
-        "compute_swhid",
-        lambda path, *, swh_binary, on_log=None, timeout=None: swhid,
+        disarchive_module, "realise_fod", lambda fod, *, nix_binary, on_log=None: str(archive)
     )
 
-    def fail_disassemble(*args, **kwargs):
-        raise DisarchiveError("disarchive binary not found")
-
-    monkeypatch.setattr(disarchive_module, "disassemble_archive", fail_disassemble)
-
-    client = FakeSWHClient(known_swhids={swhid: True})
-    result = try_disarchive(make_fod(), client)
+    client = FakeSWHClient(known_swhids={KNOWN_DIRECTORY_SWHID: True})
+    result = try_disarchive(
+        make_fod(),
+        client,
+        disarchive_binary="does-not-exist",
+    )
     assert isinstance(result, SWHCheckResult)
     assert result.known is None
     assert result.method == SWHLookupMethod.UNDETERMINED
-    assert result.swhid == swhid
+    assert result.swhid == KNOWN_DIRECTORY_SWHID
     assert "disarchive failed" in result.detail
