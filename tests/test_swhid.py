@@ -1,36 +1,45 @@
+import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 
 from nix_fod_swh_checker.swhid import SWHIdentifyError, compute_swhid
 
 
-def test_compute_swhid_parses_output(monkeypatch):
-    swhid = "swh:1:dir:" + "a" * 40
-
-    def fake_run(cmd, check, capture_output, text, timeout=None):
-        assert cmd == ["swh", "identify", "--no-filename", "/nix/store/x"]
-        return subprocess.CompletedProcess(cmd, 0, stdout=f"{swhid}\n", stderr="")
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-    assert compute_swhid("/nix/store/x") == swhid
+# Canonical SWHID for a file containing the bytes ``b"hello"`` as computed by
+# the reference ``swh identify --no-filename`` tool from swh-model.
+KNOWN_CONTENT_SWHID = "swh:1:cnt:b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0"
 
 
-def test_compute_swhid_missing_binary(monkeypatch):
-    def fake_run(cmd, check, capture_output, text, timeout=None):
-        raise FileNotFoundError()
+def test_compute_swhid_for_file(tmp_path):
+    file_path = tmp_path / "file.txt"
+    file_path.write_text("hello")
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = compute_swhid(str(file_path))
+
+    assert result == KNOWN_CONTENT_SWHID
+
+
+def test_compute_swhid_for_directory(tmp_path):
+    (tmp_path / "a").write_text("a")
+    (tmp_path / "b").write_text("b")
+
+    result = compute_swhid(str(tmp_path))
+
+    assert result.startswith("swh:1:dir:")
+
+
+def test_compute_swhid_missing_binary(tmp_path):
+    file_path = tmp_path / "file.txt"
+    file_path.write_text("hello")
+
     with pytest.raises(SWHIdentifyError, match="could not find"):
-        compute_swhid("/nix/store/x", swh_binary="does-not-exist")
+        compute_swhid(str(file_path), swh_binary="does-not-exist")
 
 
-def test_compute_swhid_command_error(monkeypatch):
-    def fake_run(cmd, check, capture_output, text, timeout=None):
-        raise subprocess.CalledProcessError(1, cmd, stderr="error: no such file")
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-    with pytest.raises(SWHIdentifyError, match="no such file"):
+def test_compute_swhid_command_error(tmp_path):
+    with pytest.raises(SWHIdentifyError, match="failed with exit code"):
         compute_swhid("/nix/store/does-not-exist")
 
 
@@ -50,3 +59,17 @@ def test_compute_swhid_timeout(monkeypatch):
     monkeypatch.setattr(subprocess, "run", fake_run)
     with pytest.raises(SWHIdentifyError, match="timed out after 1.0s"):
         compute_swhid("/nix/store/x", timeout=1.0)
+
+
+def test_compute_swhid_invokes_configured_binary(tmp_path, monkeypatch):
+    """The wrapper passes ``swh_binary`` through to the subprocess unchanged."""
+    recorded = []
+
+    def fake_run(cmd, check, capture_output, text, timeout=None):
+        recorded.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout=f"{KNOWN_CONTENT_SWHID}\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = compute_swhid(str(tmp_path), swh_binary="my-swh")
+    assert result == KNOWN_CONTENT_SWHID
+    assert recorded == [["my-swh", "identify", "--no-filename", str(tmp_path)]]

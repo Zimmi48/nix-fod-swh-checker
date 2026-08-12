@@ -203,3 +203,33 @@ All subcommands accept `--quiet`/`-q`. When not quiet, progress messages are emi
 - During the FOD checking loop, individual `SWHError`s are printed as warnings and the loop continues.
 - Known results that cannot be turned into expressions are skipped with a warning.
 - Argument parsing errors exit with code `2` via `argparse`.
+
+## Test suite
+
+The tests live under `tests/` and are run with `pytest` during the Nix check phase (`nix flake check`). The suite mixes unit tests for pure logic with integration-style tests that invoke the real external tools used by the checker.
+
+### Required binaries
+
+Several tests require the same binaries that the application uses at runtime:
+
+- `swh identify` (from `swh-model`) is used by `tests/test_swhid.py` and by any test that computes a real directory SWHID.
+- `disarchive disassemble` is used by `tests/test_disarchive.py` and by `tests/test_checker.py` cases that exercise the archive fallback.
+- `nix` is never invoked for real during tests; `realise_fod` is always mocked.
+
+These tools are declared as `nativeCheckInputs` in `flake.nix`, so they are available when the package is built with Nix.
+
+### Mocking strategy
+
+The goal is to test the actual integration with `swh identify` and `disarchive` while keeping the Nix side of the codebase fast and deterministic:
+
+- `realise_fod` is stubbed to return a temporary archive or directory path instead of running `nix build`.
+- The SWH API client is replaced by a fake that returns canned answers for `lookup_content` and `lookup_known_swhids`.
+- `swh identify` and `disarchive disassemble` are invoked for real, so the computed SWHIDs and disarchive specifications are genuine.
+
+`disarchive` is a required test dependency and is always available during the Nix check phase; no tests skip based on its presence.
+
+### Coverage by module
+
+- `test_swhid.py` — happy-path `compute_swhid` calls create real files and directories and assert against actual `swh identify` output. Error paths (missing binary, command failure, timeout, unexpected output, custom binary) exercise the wrapper's error handling, usually by stubbing `subprocess.run`.
+- `test_disarchive.py` — unknown-directory tests compute the real stripped SWHID with `swh identify`. Known-directory tests run real `disarchive disassemble` and assert on the returned specification and top-level directory. Disarchive failures are triggered by passing a non-existent `disarchive_binary`.
+- `test_checker.py` — `flat` and `git` unknown-fallback tests run real `try_disarchive` on a real archive. `nar` tests compute real directory SWHIDs from temporary directories. The identify-failure path triggers a real `SWHIdentifyError` by using a missing `swh_binary`.
