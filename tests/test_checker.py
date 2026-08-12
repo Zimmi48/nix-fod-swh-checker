@@ -1,5 +1,4 @@
 import io
-import shutil
 import tarfile
 
 import pytest
@@ -16,8 +15,6 @@ from nix_fod_swh_checker.swhid import compute_swhid
 # Directory SWHID for a tree containing a single file ``file.txt`` with the
 # bytes ``b"hello"``, as computed by ``swh identify --no-filename``.
 KNOWN_DIRECTORY_SWHID = "swh:1:dir:952dd0a0ff0d34ef3f52035c658e1d1ed56fd0c1"
-
-DISARCHIVE_AVAILABLE = shutil.which("disarchive") is not None
 
 
 class FakeSWHClient:
@@ -186,10 +183,6 @@ def test_check_fod_nar_method_identify_failure_is_undetermined(monkeypatch, tmp_
     assert "could not find" in result.detail
 
 
-@pytest.mark.skipif(
-    not DISARCHIVE_AVAILABLE,
-    reason="disarchive binary is not available in this environment",
-)
 def test_check_fod_flat_unknown_but_known_after_disarchive(monkeypatch, tmp_path):
     fod = make_fod(method="flat", hash_algo="sha256", hash_hex="b" * 64)
     archive = _make_tar_archive(tmp_path, [("src/file.txt", "hello")])
@@ -206,10 +199,6 @@ def test_check_fod_flat_unknown_but_known_after_disarchive(monkeypatch, tmp_path
     assert result.disarchive_spec is not None
 
 
-@pytest.mark.skipif(
-    not DISARCHIVE_AVAILABLE,
-    reason="disarchive binary is not available in this environment",
-)
 def test_check_fod_git_unknown_but_known_after_disarchive(monkeypatch, tmp_path):
     fod = make_fod(method="git", hash_algo="sha1", hash_hex="d" * 40)
     archive = _make_tar_archive(tmp_path, [("src/file.txt", "hello")])

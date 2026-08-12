@@ -226,7 +226,7 @@ The goal is to test the actual integration with `swh identify` and `disarchive` 
 - The SWH API client is replaced by a fake that returns canned answers for `lookup_content` and `lookup_known_swhids`.
 - `swh identify` and `disarchive disassemble` are invoked for real, so the computed SWHIDs and disarchive specifications are genuine.
 
-Tests that depend on `disarchive` use `pytest.mark.skipif(DISARCHIVE_AVAILABLE, ...)` so they are skipped in environments where the binary is missing.
+`disarchive` is a required test dependency and is always available during the Nix check phase; no tests skip based on its presence.
 
 ### Coverage by module
 

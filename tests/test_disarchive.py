@@ -1,5 +1,4 @@
 import io
-import shutil
 import tarfile
 import zipfile
 from pathlib import Path
@@ -19,8 +18,6 @@ from nix_fod_swh_checker.nix import NixCommandError
 # Directory SWHID for a tree containing a single file ``file.txt`` with the
 # bytes ``b"hello"``, as computed by ``swh identify --no-filename``.
 KNOWN_DIRECTORY_SWHID = "swh:1:dir:952dd0a0ff0d34ef3f52035c658e1d1ed56fd0c1"
-
-DISARCHIVE_AVAILABLE = shutil.which("disarchive") is not None
 
 
 def make_fod(**overrides):
@@ -139,10 +136,6 @@ def test_try_disarchive_unknown_directory_swhid(monkeypatch, tmp_path):
     assert client.known_calls == [[KNOWN_DIRECTORY_SWHID]]
 
 
-@pytest.mark.skipif(
-    not DISARCHIVE_AVAILABLE,
-    reason="disarchive binary is not available in this environment",
-)
 def test_try_disarchive_known_directory_swhid(monkeypatch, tmp_path):
     archive = _make_tar_archive(tmp_path, [("src/file.txt", "hello")])
 
