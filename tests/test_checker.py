@@ -196,7 +196,7 @@ def test_check_fod_flat_unknown_but_known_after_disarchive(monkeypatch, tmp_path
     client = FakeSWHClient(content_known=False, known_swhids={KNOWN_DIRECTORY_SWHID: True})
 
     monkeypatch.setattr(
-        checker_module, "realise_fod", lambda fod, *, nix_binary, on_log=None: str(archive)
+        disarchive_module, "realise_fod", lambda fod, *, nix_binary, on_log=None: str(archive)
     )
 
     result = check_fod(fod, client)
@@ -216,7 +216,7 @@ def test_check_fod_git_unknown_but_known_after_disarchive(monkeypatch, tmp_path)
     client = FakeSWHClient(known_swhids={KNOWN_DIRECTORY_SWHID: True})
 
     monkeypatch.setattr(
-        checker_module, "realise_fod", lambda fod, *, nix_binary, on_log=None: str(archive)
+        disarchive_module, "realise_fod", lambda fod, *, nix_binary, on_log=None: str(archive)
     )
 
     result = check_fod(fod, client)
