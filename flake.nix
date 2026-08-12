@@ -29,7 +29,11 @@
           nativeBuildInputs = [ pkgs.python3Packages.hatchling pkgs.makeWrapper ];
           propagatedBuildInputs = [ pkgs.python3Packages.requests ];
 
-          nativeCheckInputs = [ pkgs.python3Packages.pytestCheckHook ];
+          nativeCheckInputs = [
+            pkgs.python3Packages.pytestCheckHook
+            swhIdentify
+            pkgs.disarchive
+          ];
           pythonImportsCheck = [ "nix_fod_swh_checker" ];
 
           makeWrapperArgs = [
