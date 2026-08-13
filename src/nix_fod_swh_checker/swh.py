@@ -46,6 +46,18 @@ class VaultCookingTask:
     raw: dict | None = None
 
 
+@dataclass
+class SaveRequest:
+    """Status of a Software Heritage origin save request."""
+
+    id: int
+    origin_url: str
+    visit_type: str
+    save_request_status: str
+    save_task_status: str
+    raw: dict | None = None
+
+
 class SWHClient:
     """Thin wrapper around the Software Heritage Web API with basic
     rate-limiting and retry-on-429 support.
@@ -225,6 +237,63 @@ class SWHClient:
         if task is not None:
             return task
         return self.cook_vault_flat(swhid)
+
+    def request_origin_save(
+        self,
+        origin_url: str,
+        *,
+        visit_type: str = "tarball",
+    ) -> SaveRequest:
+        """Request the archiving of a software origin.
+
+        Corresponds to ``POST /origin/save/`` with ``origin_url`` and
+        ``visit_type`` query parameters.  The default ``visit_type`` is
+        ``tarball`` for simple file downloads; ``git`` should be used for
+        version-control origins.
+        """
+        response = self._request(
+            "POST",
+            "/origin/save/",
+            params={"origin_url": origin_url, "visit_type": visit_type},
+        )
+        if response.status_code == 403:
+            raise SWHError(f"origin URL {origin_url!r} is blocked by Software Heritage")
+        if response.status_code == 400:
+            raise SWHError(
+                f"invalid origin URL {origin_url!r} or visit type {visit_type!r}"
+            )
+        if response.status_code not in (200, 201):
+            raise SWHError(
+                f"unexpected status {response.status_code} requesting save for {origin_url!r}"
+            )
+        data = response.json()
+        return self._save_request_from_json(data)
+
+    def get_origin_save_request(self, request_id: int) -> SaveRequest:
+        """Get the status of a specific origin save request.
+
+        Corresponds to ``GET /origin/save/{request_id}/``.
+        """
+        response = self._request("GET", f"/origin/save/{request_id}/")
+        if response.status_code == 404:
+            raise SWHError(f"save request {request_id} not found")
+        if response.status_code != 200:
+            raise SWHError(
+                f"unexpected status {response.status_code} checking save request {request_id}"
+            )
+        data = response.json()
+        return self._save_request_from_json(data)
+
+    @staticmethod
+    def _save_request_from_json(data: dict) -> SaveRequest:
+        return SaveRequest(
+            id=data["id"],
+            origin_url=data["origin_url"],
+            visit_type=data["visit_type"],
+            save_request_status=data["save_request_status"],
+            save_task_status=data["save_task_status"],
+            raw=data,
+        )
 
     def wait_for_vault_flat(
         self,

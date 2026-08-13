@@ -165,6 +165,7 @@ def test_check_writes_json_output_with_all_documented_fields(monkeypatch, tmp_pa
         "disarchive_spec",
         "disarchive_swhid",
         "disarchive_top_dir",
+        "origin_urls",
     }
     assert entry["known"] is True
     assert entry["method"] == "known_after_disarchive"
@@ -174,6 +175,7 @@ def test_check_writes_json_output_with_all_documented_fields(monkeypatch, tmp_pa
     assert entry["disarchive_spec"] == "(disarchive (version 0))"
     assert entry["disarchive_swhid"] == "swh:1:dir:" + "c" * 40
     assert entry["disarchive_top_dir"] == "hello-1.0"
+    assert entry["origin_urls"] == []
 
     fod_obj = entry["fod"]
     assert set(fod_obj.keys()) == {
@@ -185,10 +187,12 @@ def test_check_writes_json_output_with_all_documented_fields(monkeypatch, tmp_pa
         "hash_algo",
         "hash_hex",
         "label",
+        "origin_urls",
     }
     assert fod_obj["drv_path"] == fod.drv_path
     assert fod_obj["output_name"] == "out"
     assert fod_obj["label"] == fod.label
+    assert fod_obj["origin_urls"] == []
 
 
 def test_check_only_unknown_filters_report(monkeypatch, capsys, tmp_path):
@@ -566,6 +570,397 @@ def test_build_swh_fods_from_nix_file(monkeypatch, capsys, tmp_path):
     assert exit_code == 0
     assert built == [(str(nix_file), ["a"], {"extra_args": [], "on_log": None})]
     assert "built SWH-backed FOD(s)" in err
+
+
+def test_request_archiving_without_input_returns_error(capsys):
+    exit_code = cli.main(["request-archiving"])
+    err = capsys.readouterr().err
+    assert exit_code == 2
+    assert "installable or -i/--json-input is required" in err
+
+
+def test_request_archiving_without_checkpoint_returns_error(capsys, tmp_path):
+    checkpoint = tmp_path / "missing.json"
+    exit_code = cli.main(
+        ["request-archiving", "nixpkgs#hello", "--checkpoint-file", str(checkpoint)]
+    )
+    err = capsys.readouterr().err
+    assert exit_code == 1
+    assert "no checkpoint found" in err
+
+
+def test_request_archiving_dry_run_lists_unknown_origins(capsys, tmp_path):
+    fod_tarball = _fod("tarball")
+    fod_tarball.origin_urls = ["https://example.com/archive.tar.gz"]
+    fod_git = FixedOutputDerivation(
+        drv_path="/nix/store/git.drv",
+        output_name="out",
+        output_path="/nix/store/git-out",
+        name="git",
+        method="git",
+        hash_algo="sha1",
+        hash_hex="a" * 40,
+        origin_urls=["https://example.com/repo.git"],
+    )
+    fod_known = _fod("known")
+    fod_known.origin_urls = ["https://example.com/known.tar.gz"]
+
+    checkpoint = tmp_path / "ckpt.json"
+    from nix_fod_swh_checker.checkpoint import save_checkpoint
+
+    save_checkpoint(
+        checkpoint,
+        "nixpkgs#hello",
+        {
+            fod_tarball.label: SWHCheckResult(
+                fod=fod_tarball,
+                known=False,
+                method=SWHLookupMethod.CONTENT_HASH,
+                detail="not known",
+                origin_urls=fod_tarball.origin_urls,
+            ),
+            fod_git.label: SWHCheckResult(
+                fod=fod_git,
+                known=False,
+                method=SWHLookupMethod.SWHID_KNOWN,
+                detail="not known",
+                origin_urls=fod_git.origin_urls,
+            ),
+            fod_known.label: SWHCheckResult(
+                fod=fod_known,
+                known=True,
+                method=SWHLookupMethod.CONTENT_HASH,
+                detail="known",
+                origin_urls=fod_known.origin_urls,
+            ),
+        },
+    )
+
+    exit_code = cli.main(
+        [
+            "request-archiving",
+            "nixpkgs#hello",
+            "--checkpoint-file",
+            str(checkpoint),
+            "--dry-run",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "https://example.com/archive.tar.gz (tarball)" in out
+    assert "https://example.com/repo.git (git)" in out
+    assert "https://example.com/known.tar.gz" not in out
+
+
+def test_request_archiving_submits_requests_for_unknown_origins(monkeypatch, capsys, tmp_path):
+    fod = _fod("a")
+    fod.origin_urls = ["https://example.com/archive.tar.gz"]
+    checkpoint = tmp_path / "ckpt.json"
+    from nix_fod_swh_checker.checkpoint import save_checkpoint
+
+    save_checkpoint(
+        checkpoint,
+        "nixpkgs#hello",
+        {
+            fod.label: SWHCheckResult(
+                fod=fod,
+                known=False,
+                method=SWHLookupMethod.CONTENT_HASH,
+                detail="not known",
+                origin_urls=fod.origin_urls,
+            ),
+        },
+    )
+
+    requested = []
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+        def request_origin_save(self, origin_url, *, visit_type="tarball"):
+            requested.append((origin_url, visit_type))
+            return type(
+                "SaveRequest",
+                (),
+                {
+                    "id": 123,
+                    "origin_url": origin_url,
+                    "visit_type": visit_type,
+                    "save_request_status": "accepted",
+                    "save_task_status": "pending",
+                },
+            )()
+
+    monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: FakeClient())
+    monkeypatch.setattr(cli, "_first_live_url", lambda urls, **kwargs: urls[0])
+
+    exit_code = cli.main(
+        ["request-archiving", "nixpkgs#hello", "--checkpoint-file", str(checkpoint)]
+    )
+    err = capsys.readouterr().err
+    assert exit_code == 0
+    assert requested == [("https://example.com/archive.tar.gz", "tarball")]
+    assert "archiving requests submitted" in err
+
+
+def test_request_archiving_from_json_input(monkeypatch, capsys, tmp_path):
+    fod = _fod("a")
+    fod.origin_urls = ["https://example.com/repo.git"]
+    json_file = tmp_path / "results.json"
+    json_file.write_text(
+        json.dumps(
+            [
+                {
+                    "fod": {
+                        "drv_path": fod.drv_path,
+                        "output_name": fod.output_name,
+                        "output_path": fod.output_path,
+                        "name": fod.name,
+                        "method": "git",
+                        "hash_algo": fod.hash_algo,
+                        "hash_hex": fod.hash_hex,
+                        "label": fod.label,
+                    },
+                    "known": False,
+                    "method": "swhid_known",
+                    "detail": "not known",
+                    "origin_urls": fod.origin_urls,
+                }
+            ]
+        )
+    )
+
+    requested = []
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+        def request_origin_save(self, origin_url, *, visit_type="tarball"):
+            requested.append((origin_url, visit_type))
+            return type(
+                "SaveRequest",
+                (),
+                {
+                    "id": 456,
+                    "origin_url": origin_url,
+                    "visit_type": visit_type,
+                    "save_request_status": "accepted",
+                    "save_task_status": "pending",
+                },
+            )()
+
+    monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: FakeClient())
+    monkeypatch.setattr(cli, "_first_live_url", lambda urls, **kwargs: urls[0])
+
+    exit_code = cli.main(["request-archiving", "-i", str(json_file)])
+    assert exit_code == 0
+    assert requested == [("https://example.com/repo.git", "git")]
+
+
+def test_request_archiving_warns_when_no_origin_urls(capsys, tmp_path):
+    fod = _fod("a")
+    fod.origin_urls = []
+    checkpoint = tmp_path / "ckpt.json"
+    from nix_fod_swh_checker.checkpoint import save_checkpoint
+
+    save_checkpoint(
+        checkpoint,
+        "nixpkgs#hello",
+        {
+            fod.label: SWHCheckResult(
+                fod=fod,
+                known=False,
+                method=SWHLookupMethod.CONTENT_HASH,
+                detail="not known",
+                origin_urls=[],
+            ),
+        },
+    )
+
+    exit_code = cli.main(
+        ["request-archiving", "nixpkgs#hello", "--checkpoint-file", str(checkpoint), "--quiet"]
+    )
+    err = capsys.readouterr().err
+    assert exit_code == 0
+    assert "warning: skipping" in err
+    assert "no origin URLs" in err
+
+
+def test_request_archiving_warns_when_all_urls_unreachable(monkeypatch, capsys, tmp_path):
+    fod = _fod("a")
+    fod.origin_urls = ["https://example.com/dead.tar.gz"]
+    checkpoint = tmp_path / "ckpt.json"
+    from nix_fod_swh_checker.checkpoint import save_checkpoint
+
+    save_checkpoint(
+        checkpoint,
+        "nixpkgs#hello",
+        {
+            fod.label: SWHCheckResult(
+                fod=fod,
+                known=False,
+                method=SWHLookupMethod.CONTENT_HASH,
+                detail="not known",
+                origin_urls=fod.origin_urls,
+            ),
+        },
+    )
+
+    monkeypatch.setattr(cli, "_first_live_url", lambda urls, **kwargs: None)
+
+    exit_code = cli.main(
+        ["request-archiving", "nixpkgs#hello", "--checkpoint-file", str(checkpoint), "--quiet"]
+    )
+    err = capsys.readouterr().err
+    assert exit_code == 0
+    assert "warning: skipping" in err
+    assert "no reachable origin URL" in err
+
+
+def test_request_archiving_selects_first_live_url(monkeypatch, capsys, tmp_path):
+    fod = _fod("a")
+    fod.origin_urls = ["https://example.com/dead.tar.gz", "https://example.com/live.tar.gz"]
+    checkpoint = tmp_path / "ckpt.json"
+    from nix_fod_swh_checker.checkpoint import save_checkpoint
+
+    save_checkpoint(
+        checkpoint,
+        "nixpkgs#hello",
+        {
+            fod.label: SWHCheckResult(
+                fod=fod,
+                known=False,
+                method=SWHLookupMethod.CONTENT_HASH,
+                detail="not known",
+                origin_urls=fod.origin_urls,
+            ),
+        },
+    )
+
+    requested = []
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+        def request_origin_save(self, origin_url, *, visit_type="tarball"):
+            requested.append(origin_url)
+            return type(
+                "SaveRequest",
+                (),
+                {
+                    "id": 1,
+                    "origin_url": origin_url,
+                    "visit_type": visit_type,
+                    "save_request_status": "accepted",
+                    "save_task_status": "pending",
+                },
+            )()
+
+    monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: FakeClient())
+    monkeypatch.setattr(
+        cli, "_first_live_url", lambda urls, **kwargs: "https://example.com/live.tar.gz"
+    )
+
+    exit_code = cli.main(
+        ["request-archiving", "nixpkgs#hello", "--checkpoint-file", str(checkpoint), "--quiet"]
+    )
+    assert exit_code == 0
+    assert requested == ["https://example.com/live.tar.gz"]
+
+
+def test_request_archiving_handles_keyboard_interrupt(monkeypatch, capsys, tmp_path):
+    fod = _fod("a")
+    fod.origin_urls = ["https://example.com/archive.tar.gz"]
+    checkpoint = tmp_path / "ckpt.json"
+    from nix_fod_swh_checker.checkpoint import save_checkpoint
+
+    save_checkpoint(
+        checkpoint,
+        "nixpkgs#hello",
+        {
+            fod.label: SWHCheckResult(
+                fod=fod,
+                known=False,
+                method=SWHLookupMethod.CONTENT_HASH,
+                detail="not known",
+                origin_urls=fod.origin_urls,
+            ),
+        },
+    )
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+        def request_origin_save(self, origin_url, *, visit_type="tarball"):
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: FakeClient())
+    monkeypatch.setattr(cli, "_first_live_url", lambda urls, **kwargs: urls[0])
+
+    exit_code = cli.main(
+        ["request-archiving", "nixpkgs#hello", "--checkpoint-file", str(checkpoint)]
+    )
+    err = capsys.readouterr().err
+    assert exit_code == 130
+    assert "interrupted" in err
+    assert "Traceback" not in err
+
+
+def test_request_archiving_reports_api_error_per_origin(monkeypatch, capsys, tmp_path):
+    fod = _fod("a")
+    fod.origin_urls = ["https://example.com/archive.tar.gz"]
+    checkpoint = tmp_path / "ckpt.json"
+    from nix_fod_swh_checker.checkpoint import save_checkpoint
+
+    save_checkpoint(
+        checkpoint,
+        "nixpkgs#hello",
+        {
+            fod.label: SWHCheckResult(
+                fod=fod,
+                known=False,
+                method=SWHLookupMethod.CONTENT_HASH,
+                detail="not known",
+                origin_urls=fod.origin_urls,
+            ),
+        },
+    )
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+        def request_origin_save(self, origin_url, *, visit_type="tarball"):
+            raise cli.SWHError("blocked")
+
+    monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: FakeClient())
+    monkeypatch.setattr(cli, "_first_live_url", lambda urls, **kwargs: urls[0])
+
+    exit_code = cli.main(
+        ["request-archiving", "nixpkgs#hello", "--checkpoint-file", str(checkpoint), "--quiet"]
+    )
+    err = capsys.readouterr().err
+    assert exit_code == 0
+    assert "warning: blocked" in err
 
 
 def test_build_swh_fods_reports_nix_build_error(monkeypatch, capsys, tmp_path):

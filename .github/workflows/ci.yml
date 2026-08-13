@@ -46,6 +46,19 @@ jobs:
             --swh-identify-timeout 10 \
             --disarchive-timeout 10
 
+      - name: Request archiving of unknown FOD origins (dry run)
+        run: |
+          nix run .#nix-fod-swh-check -- request-archiving nixpkgs#hello \
+            -i check-results.json \
+            --dry-run
+
+      - name: Request archiving of unknown FOD origins (real run)
+        env:
+          SWH_API_TOKEN: ${{ secrets.SWH_API_TOKEN }}
+        run: |
+          nix run .#nix-fod-swh-check -- request-archiving nixpkgs#hello \
+            -i check-results.json
+
       - name: Generate SWH-backed FODs expression
         run: |
           nix run .#nix-fod-swh-check -- generate-swh-fods nixpkgs#hello \

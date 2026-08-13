@@ -10,6 +10,8 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
+import requests
+
 from .checker import check_fod
 from .checkpoint import default_checkpoint_path, load_checkpoint, save_checkpoint
 from .models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
@@ -52,6 +54,55 @@ def _build_parser() -> argparse.ArgumentParser:
     check_parser.add_argument(
         "installable",
         help="the Nix installable to inspect, e.g. 'nixpkgs#hello' or a store path",
+    )
+
+    archive_parser = subparsers.add_parser(
+        "request-archiving",
+        help="request the archiving of unknown FOD origins on Software Heritage",
+    )
+    archive_parser.add_argument(
+        "installable",
+        nargs="?",
+        default=None,
+        help="the Nix installable that was previously checked",
+    )
+    archive_parser.add_argument(
+        "-i",
+        "--json-input",
+        default=None,
+        help="path to a JSON file containing check results (as produced by 'check -o')",
+    )
+    archive_parser.add_argument(
+        "--checkpoint-file",
+        default=None,
+        help="checkpoint to read results from (default: a per-installable file under $XDG_CACHE_HOME/nix-fod-swh-checker/)",
+    )
+    archive_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="list the origins that would be requested without contacting Software Heritage",
+    )
+    archive_parser.add_argument(
+        "--swh-api-url",
+        default=DEFAULT_API_URL,
+        help="base URL of the Software Heritage API (default: %(default)s)",
+    )
+    archive_parser.add_argument(
+        "--swh-api-token",
+        default=None,
+        help="bearer token for the Software Heritage API (or set SWH_API_TOKEN)",
+    )
+    archive_parser.add_argument(
+        "--min-delay",
+        type=float,
+        default=1.0,
+        help="minimum delay in seconds between Software Heritage API requests when unauthenticated (default: %(default)s)",
+    )
+    archive_parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="do not print progress messages to stderr while requesting archiving",
     )
 
     generate_parser = subparsers.add_parser(
@@ -249,6 +300,7 @@ def _result_to_dict(result: SWHCheckResult) -> dict:
         "disarchive_spec": result.disarchive_spec,
         "disarchive_swhid": result.disarchive_swhid,
         "disarchive_top_dir": result.disarchive_top_dir,
+        "origin_urls": result.origin_urls,
     }
 
 
@@ -460,6 +512,7 @@ def _load_results_from_json(path: Path) -> list[SWHCheckResult]:
                     disarchive_spec=raw.get("disarchive_spec"),
                     disarchive_swhid=raw.get("disarchive_swhid"),
                     disarchive_top_dir=raw.get("disarchive_top_dir"),
+                    origin_urls=raw.get("origin_urls") or [],
                 )
             )
         except KeyError as exc:
@@ -508,6 +561,45 @@ def _swh_client_from_args(args: argparse.Namespace, on_log) -> SWHClient:
         min_delay=args.min_delay,
         on_log=on_log,
     )
+
+
+def _visit_type_for_result(result: SWHCheckResult) -> str:
+    """Infer the Software Heritage visit type for a FOD's origin URLs.
+
+    ``git``-method FODs are assumed to come from a version-control origin;
+    everything else (``flat`` file downloads, ``nar`` archives, etc.) is
+    treated as a tarball download.
+    """
+    if result.fod.method == "git":
+        return "git"
+    return "tarball"
+
+
+def _first_live_url(
+    urls: list[str],
+    *,
+    timeout: float = 10.0,
+    on_log: Callable[[str], None] | None = None,
+) -> str | None:
+    """Return the first reachable URL, or ``None`` if none respond.
+
+    A URL is considered reachable when a ``HEAD`` request succeeds with a
+    status code below ``400`` (including redirects). ``405 Method Not
+    Allowed`` is also accepted, because some servers reject ``HEAD`` even
+    though the origin exists.
+    """
+    for url in urls:
+        try:
+            response = requests.head(url, timeout=timeout, allow_redirects=True)
+        except requests.RequestException as exc:
+            if on_log:
+                on_log(f"{url}: unreachable ({exc})")
+            continue
+        if response.status_code == 405 or response.status_code < 400:
+            return url
+        if on_log:
+            on_log(f"{url}: unreachable (HTTP {response.status_code})")
+    return None
 
 
 def _extract_vault_swhids_from_nix_file(path: str) -> set[str]:
@@ -568,6 +660,115 @@ def _eval_nix_file_outputs(path: str) -> dict[str, str]:
 def _list_attrs_in_nix_file(path: str) -> list[str]:
     """Return the attribute names defined in a Nix file."""
     return list(_eval_nix_file_outputs(path).keys())
+
+
+def _run_request_archiving_command(args: argparse.Namespace) -> int:
+    if args.json_input:
+        try:
+            results = _load_results_from_json(Path(args.json_input))
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(f"error: could not read JSON results from {args.json_input}: {exc}", file=sys.stderr)
+            return 1
+        if not results:
+            print(
+                f"error: no check results found in {args.json_input}; "
+                "run 'nix-fod-swh-check check <installable> -o <file>' first",
+                file=sys.stderr,
+            )
+            return 1
+    elif args.installable:
+        checkpoint_path = (
+            Path(args.checkpoint_file)
+            if args.checkpoint_file
+            else default_checkpoint_path(args.installable)
+        )
+        checked = load_checkpoint(checkpoint_path)
+        if not checked:
+            print(
+                f"error: no checkpoint found at {checkpoint_path}; "
+                "run 'nix-fod-swh-check check <installable>' first",
+                file=sys.stderr,
+            )
+            return 1
+        results = list(checked.values())
+    else:
+        print(
+            "error: either an installable or -i/--json-input is required",
+            file=sys.stderr,
+        )
+        return 2
+
+    on_log = None if args.quiet else _log_to_stderr
+
+    # Collect (visit_type, url) pairs for FODs that are not known to SWH.
+    origins: dict[tuple[str, str], list[SWHCheckResult]] = {}
+    for result in results:
+        if result.known is True:
+            continue
+        if not result.origin_urls:
+            print(
+                f"warning: skipping {result.fod.label}: no origin URLs",
+                file=sys.stderr,
+            )
+            continue
+        visit_type = _visit_type_for_result(result)
+        if args.dry_run:
+            # In dry-run mode we do not probe URLs, we just list candidates.
+            for url in result.origin_urls:
+                origins.setdefault((visit_type, url), []).append(result)
+            continue
+        url = _first_live_url(result.origin_urls, on_log=on_log)
+        if url is None:
+            print(
+                f"warning: skipping {result.fod.label}: no reachable origin URL",
+                file=sys.stderr,
+            )
+            continue
+        origins.setdefault((visit_type, url), []).append(result)
+
+    if not origins:
+        print(
+            "no origins to request archiving for",
+            file=sys.stderr,
+        )
+        return 0
+
+    if on_log:
+        on_log(
+            f"requesting archiving of {len(origins)} origin(s) on Software Heritage..."
+        )
+
+    if args.dry_run:
+        for (visit_type, url), associated in sorted(origins.items()):
+            labels = ", ".join(sorted({r.fod.label for r in associated}))
+            print(f"{url} ({visit_type}) [{labels}]")
+        return 0
+
+    try:
+        with _swh_client_from_args(args, on_log) as client:
+            for (visit_type, url), associated in sorted(origins.items()):
+                try:
+                    request = client.request_origin_save(url, visit_type=visit_type)
+                    status = f"{request.save_request_status} / {request.save_task_status}"
+                except SWHError as exc:
+                    print(f"warning: {exc}", file=sys.stderr)
+                    continue
+                if on_log:
+                    labels = ", ".join(sorted({r.fod.label for r in associated}))
+                    on_log(
+                        f"{url} ({visit_type}): {status} (request {request.id}) [{labels}]"
+                    )
+    except KeyboardInterrupt:
+        print(file=sys.stderr)
+        print("interrupted; some archiving requests may not have been submitted.", file=sys.stderr)
+        return 130
+    except SWHError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    if on_log:
+        on_log("archiving requests submitted")
+    return 0
 
 
 def _run_cook_swh_fods_command(args: argparse.Namespace) -> int:
@@ -736,6 +937,9 @@ def _run_build_swh_fods_command(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+
+    if args.command == "request-archiving":
+        return _run_request_archiving_command(args)
 
     if args.command == "generate-swh-fods":
         return _run_generate_command(args)

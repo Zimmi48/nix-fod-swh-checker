@@ -54,6 +54,7 @@ def load_checkpoint(path: Path) -> dict[str, SWHCheckResult]:
                 disarchive_spec=entry.get("disarchive_spec"),
                 disarchive_swhid=entry.get("disarchive_swhid"),
                 disarchive_top_dir=entry.get("disarchive_top_dir"),
+                origin_urls=entry.get("origin_urls") or [],
             )
         except (KeyError, TypeError, ValueError):
             continue
@@ -76,6 +77,7 @@ def save_checkpoint(path: Path, installable: str, results: dict[str, SWHCheckRes
                 "disarchive_spec": result.disarchive_spec,
                 "disarchive_swhid": result.disarchive_swhid,
                 "disarchive_top_dir": result.disarchive_top_dir,
+                "origin_urls": result.origin_urls,
             }
             for label, result in results.items()
         },

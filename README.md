@@ -1,6 +1,6 @@
 # nix-fod-swh-checker
 
-List every [fixed-output derivation](https://nix.dev/manual/nix/stable/language/advanced-attributes#adv-attr-outputHash) (FOD) reachable from a Nix attribute, and check whether each one's source is already archived on [Software Heritage](https://www.softwareheritage.org/).
+List every [fixed-output derivation](https://nix.dev/manual/nix/stable/language/advanced-attributes#adv-attr-outputHash) (FOD) reachable from a Nix attribute, and check whether each one's source is already archived on [Software Heritage](https://www.softwareheritage.org/) (SWH).
 
 For FODs that are archived, the tool can also generate alternative derivations that download the same content from Software Heritage, allowing a Nix build to succeed even when the original upstream sources are unavailable.
 
@@ -63,7 +63,19 @@ To write machine-readable JSON results to a file instead of the human-readable r
 nix run .#nix-fod-swh-check -- check nixpkgs#hello -o results.json
 ```
 
-### 2. Generate SWH-backed FODs
+### 2. Request the archiving of missing sources
+
+For FODs that are not yet archived on Software Heritage, you can ask SWH to archive their upstream origins:
+
+```console
+nix run .#nix-fod-swh-check -- request-archiving nixpkgs#hello
+```
+
+The command reads the checkpoint produced by `check` and considers each unknown FOD. For FODs that declare `url`/`urls` in their derivation environment, it probes each URL with a `HEAD` request and keeps the first one that responds. This handles mirror lists while avoiding save requests for dead origins. The visit type is inferred from the FOD method (`git` for git-hashed FODs, `tarball` otherwise). Use `--dry-run` to preview the origins that would be requested.
+
+FODs with no usable URL, or whose URLs are all unreachable, are skipped with a warning. FODs produced by complex build steps typically fall into this category.
+
+### 3. Generate SWH-backed FODs
 
 ```console
 nix run .#nix-fod-swh-check -- generate-swh-fods nixpkgs#hello -o swh-backed-fods.nix
@@ -73,7 +85,7 @@ This produces a Nix expression that builds SWH-backed derivations for every know
 
 This command requires a checkpoint file in the standard location or the JSON results file from the previous step (use `-i` / `--json-input` in this case).
 
-### 3. Cook required vault archives
+### 4. Cook required vault archives
 
 Directory SWHIDs are fetched as vault flat bundles, which may need to be cooked on demand by Software Heritage. Submit cooking requests (or check existing ones) and exit:
 
@@ -81,7 +93,7 @@ Directory SWHIDs are fetched as vault flat bundles, which may need to be cooked 
 nix run .#nix-fod-swh-check -- cook-swh-fods swh-backed-fods.nix
 ```
 
-### 4. Build the SWH-backed FODs
+### 5. Build the SWH-backed FODs
 
 ```console
 nix run .#nix-fod-swh-check -- build-swh-fods swh-backed-fods.nix

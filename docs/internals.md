@@ -43,6 +43,7 @@ Outcome of checking one FOD:
 - `detail`: human-readable explanation.
 - `swhid`, `swh_url`: SWHID and archive URL, when applicable.
 - `disarchive_spec`, `disarchive_swhid`, `disarchive_top_dir`: disarchive metadata, when applicable.
+- `origin_urls`: upstream origin URLs extracted from the FOD environment.
 
 ### `SWHLookupMethod`
 
@@ -63,6 +64,8 @@ nix derivation show --recursive <installable>
 The JSON output is normalized so that both full store paths and basename-only keys are accepted. Non-derivation entries are dropped.
 
 `nix.py:iter_fixed_output_derivations` walks every derivation's `outputs` mapping. An output is considered a FOD exactly when it has a non-empty `hash` field. The `method` is taken from `output.method`; if that is missing, the legacy `env.outputHashMode` is used, with `recursive` mapped to `nar`.
+
+`nix.py:_extract_origin_urls` collects upstream URLs from the derivation environment: the `url` variable (single URL) and the `urls` variable (whitespace-separated mirror URLs). These are stored on `FixedOutputDerivation.origin_urls` and copied into each `SWHCheckResult`.
 
 ## Comparison strategies
 
@@ -114,6 +117,8 @@ The reported SWHID prefers the disarchive SWHID when it is known, because that i
 
 - `lookup_content(algo, hash_hex)` → `GET /content/{algo}:{hash}/`
 - `lookup_known_swhids(swhids)` → `POST /known/`
+- `request_origin_save(url, visit_type)` → `POST /origin/save/`
+- `get_origin_save_request(request_id)` → `GET /origin/save/{request_id}/`
 - `cook_vault_flat(swhid)` → `POST /vault/flat/{swhid}/`
 - `get_vault_flat_task(swhid)` → `GET /vault/flat/{swhid}/`
 - `ensure_vault_flat_cooking(swhid)` — returns an existing task or creates one.
@@ -163,6 +168,24 @@ The `outputHashMode` mapping for content SWHIDs is:
 
 If the FOD method is missing or unsupported, `swh_fod_expression` returns `None` and the result is skipped.
 
+## Requesting archival of unknown origins
+
+`request-archiving` reads previously checked results and asks Software Heritage to archive the upstream origins of FODs that are not yet in the archive.
+
+1. Load results from a checkpoint or JSON file.
+2. Keep only results where `known` is not `true`.
+3. For each result, look at `origin_urls`:
+   - If the list is empty, warn that the FOD is being skipped and continue.
+   - Otherwise, probe each URL with a `HEAD` request in order and keep the first one that responds. A response is considered live when its status is `< 400` or `405`; redirects are followed. If none respond, warn that the FOD is being skipped and continue.
+4. Infer a visit type for each remaining result: `git` when `fod.method == "git"`, otherwise `tarball`.
+5. Deduplicate `(visit_type, url)` pairs.
+6. For each pair, call `SWHClient.request_origin_save`.
+7. Print the save request status and identifier for each submitted origin.
+
+The command is intentionally fire-and-forget: it does not wait for Software Heritage to actually visit the origin. A `--dry-run` flag lists the origins that would be requested without making any API calls and without probing URLs.
+
+Skipped FODs and failed save requests are reported as warnings on stderr; the command continues with the remaining origins.
+
 ## Building SWH-backed FODs
 
 `build-swh-fods` first generates or loads a `swh-backed-fods.nix` file, then:
@@ -199,7 +222,7 @@ All subcommands accept `--quiet`/`-q`. When not quiet, progress messages are emi
 ## Error handling
 
 - `NixCommandError` and `SWHError` are caught at subcommand boundaries and reported to stderr with exit code `1`.
-- `KeyboardInterrupt` is caught in `_run_check_command` and converted to a clean message and exit code `130`.
+- `KeyboardInterrupt` is caught in `_run_check_command` and `_run_request_archiving_command` and converted to a clean message and exit code `130`.
 - During the FOD checking loop, individual `SWHError`s are printed as warnings and the loop continues.
 - Known results that cannot be turned into expressions are skipped with a warning.
 - Argument parsing errors exit with code `2` via `argparse`.

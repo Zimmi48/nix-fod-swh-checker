@@ -1,7 +1,7 @@
 """Data models shared across the nix-fod-swh-checker package."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 
@@ -28,6 +28,7 @@ class FixedOutputDerivation:
     method: str | None
     hash_algo: str | None
     hash_hex: str | None
+    origin_urls: list[str] = field(default_factory=list)
 
     @property
     def label(self) -> str:
@@ -48,3 +49,4 @@ class SWHCheckResult:
     disarchive_spec: str | None = None
     disarchive_swhid: str | None = None
     disarchive_top_dir: str | None = None
+    origin_urls: list[str] = field(default_factory=list)

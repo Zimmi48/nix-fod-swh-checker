@@ -14,6 +14,8 @@ The program is also exposed as the Python module `nix_fod_swh_checker.cli:main` 
 
 A subcommand is required. Running without one prints a usage message and exits with code `2`.
 
+The available subcommands are: `check`, `request-archiving`, `generate-swh-fods`, `cook-swh-fods`, and `build-swh-fods`.
+
 ## Global behavior
 
 - All progress and diagnostic messages are written to **stderr**.
@@ -40,10 +42,11 @@ The command performs the following steps:
 
 1. Run `nix derivation show --recursive <installable>`.
 2. Walk the returned derivation graph and collect every output that has a fixed hash.
-3. For each FOD, choose a comparison strategy based on its `method` and hash algorithm (see [internals.md](internals.md#comparison-strategies)).
-4. Query the Software Heritage API.
-5. Save each result to a checkpoint file as it is computed, unless `--no-checkpoint` is given.
-6. Print a human-readable report, or write JSON results to the path given with `-o`/`--output`.
+3. For each FOD, extract any upstream origin URLs from the derivation environment (see [Origin URLs](#origin-urls)).
+4. Choose a comparison strategy based on its `method` and hash algorithm (see [internals.md](internals.md#comparison-strategies)).
+5. Query the Software Heritage API.
+6. Save each result to a checkpoint file as it is computed, unless `--no-checkpoint` is given.
+7. Print a human-readable report, or write JSON results to the path given with `-o`/`--output`.
 
 If the checkpoint already contains results for some FODs, those FODs are skipped and only the missing ones are checked.
 
@@ -102,6 +105,7 @@ When `-o`/`--output` is given, the file contains a JSON array of result objects.
 | `disarchive_spec` | string or `null` | The GNU Guix `disarchive` specification, if captured. |
 | `disarchive_swhid` | string or `null` | The SWHID embedded in the disarchive specification, if any. |
 | `disarchive_top_dir` | string or `null` | The name of the single top-level directory that was stripped before computing the stripped SWHID, if any. |
+| `origin_urls` | list of strings | Upstream origin URLs extracted from the FOD's derivation environment, if any. Empty when no URLs are declared. |
 
 The `fod` field is a [FOD object](#fod-object).
 
@@ -115,6 +119,53 @@ The `fod` field is a [FOD object](#fod-object).
 | `130` | The user interrupted the command with Ctrl+C. A checkpoint is saved unless `--no-checkpoint` was used. |
 
 Unhandled exceptions propagate and produce a Python traceback.
+
+---
+
+### `request-archiving`
+
+```
+nix-fod-swh-check request-archiving [options] [<installable>]
+```
+
+Request the archiving of upstream origins for FODs that were not found on Software Heritage.
+
+The command reads results from either:
+
+- the checkpoint file for `<installable>` (default), or
+- the JSON file given with `-i`/`--json-input`.
+
+For every result whose `known` field is not `true` and which declares at least one [origin URL](#origin-urls), the command tries to pick a single reachable origin URL and sends a save request to Software Heritage. Each URL is probed with a `HEAD` request in order, and the first one that responds successfully is kept. If none of the URLs respond, the FOD is skipped with a warning.
+
+The visit type is inferred from the FOD's `method`:
+
+- `git` → `git`
+- `flat`, `nar`, or any other method → `tarball`
+
+Use `--dry-run` to list the origins that would be requested without contacting Software Heritage. In dry-run mode the origin URLs are not probed.
+
+Origins are deduplicated by `(visit_type, url)` before any request is sent. If a request fails (for example because the origin is blocked), a warning is printed and the command continues with the remaining origins.
+FODs that are skipped are reported with a warning on stderr: either because they have no `origin_urls`, or because none of their URLs are reachable.
+
+#### `request-archiving` options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `-i`, `--json-input` `<path>` | none | Read results from a JSON file produced by `check -o`. |
+| `--checkpoint-file` `<path>` | per-installable cache file | Checkpoint to read results from. Ignored when `-i` is used. |
+| `--dry-run` | false | List origins that would be requested without making API calls. |
+| `--swh-api-url` `<url>` | `https://archive.softwareheritage.org/api/1` | Base URL of the Software Heritage API. |
+| `--swh-api-token` `<token>` | value of `SWH_API_TOKEN` | Bearer token for authenticated requests. |
+| `--min-delay` `<seconds>` | `1.0` | Minimum delay between anonymous API requests. |
+| `-q`, `--quiet` | false | Suppress stderr progress messages. |
+
+#### `request-archiving` exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success, or no origins needed archiving. |
+| `1` | A Software Heritage API error occurred, or the checkpoint/JSON input could not be read. |
+| `2` | Neither an installable nor `-i`/`--json-input` was provided. |
 
 ---
 
@@ -239,7 +290,7 @@ If all outputs are already in the store, the command reports this and exits `0` 
 
 ## Checkpoint file
 
-The checkpoint file is a JSON document used to resume interrupted `check` runs and to feed results into `generate-swh-fods`, `cook-swh-fods`, and `build-swh-fods`.
+The checkpoint file is a JSON document used to resume interrupted `check` runs and to feed results into `generate-swh-fods`, `cook-swh-fods`, `build-swh-fods`, and `request-archiving`.
 
 ### Default location
 
@@ -266,7 +317,8 @@ If `XDG_CACHE_HOME` is unset, `$HOME/.cache` is used.
       "swh_url": "...",
       "disarchive_spec": "...",
       "disarchive_swhid": "...",
-      "disarchive_top_dir": "..."
+      "disarchive_top_dir": "...",
+      "origin_urls": ["..."]
     }
   }
 }
@@ -298,8 +350,22 @@ Both the `check` JSON output and checkpoint files describe each checked FOD with
 | `hash_algo` | string or `null` | Hash algorithm reported by Nix. |
 | `hash_hex` | string or `null` | Fixed output hash. |
 | `label` | string | Computed label `<drv-path>` or `<drv-path>^<output-name>` for non-`out` outputs. |
+| `origin_urls` | list of strings | Upstream origin URLs extracted from the derivation environment. Empty when no URLs are declared. |
 
 `label` is a computed property. In the `check` JSON output it is included as a field of the `fod` object for convenience. In checkpoint files it is the key of the `results` object, so it is not repeated inside the `fod` object. It is ignored when JSON output is read back by `generate-swh-fods -i`.
+
+---
+
+## Origin URLs
+
+When `nix derivation show` emits a FOD, the derivation environment usually contains the upstream URL(s) from which the content is downloaded. The checker extracts these from the `url` and `urls` environment variables:
+
+- `env.url` — a single origin URL.
+- `env.urls` — a whitespace-separated list of mirror URLs.
+
+These URLs are stored in the `origin_urls` field of each result and in checkpoint files. They are used by `request-archiving` to ask Software Heritage to archive origins that are not yet in the archive.
+
+Not every FOD has a usable origin URL. Some FODs are produced by complex build steps, and their environment contains no `url`/`urls` variable. `request-archiving` simply skips such FODs.
 
 ---
 
@@ -321,5 +387,5 @@ Software Heritage rate-limits anonymous API requests. The client behaves as foll
 | Variable | Used by | Description |
 |----------|---------|-------------|
 | `SWH_API_TOKEN` | all subcommands that talk to SWH | Default bearer token for Software Heritage API requests. Overridden by `--swh-api-token`. |
-| `XDG_CACHE_HOME` | `check`, `generate-swh-fods`, `cook-swh-fods`, `build-swh-fods` | Base directory for the default checkpoint file. |
+| `XDG_CACHE_HOME` | `check`, `generate-swh-fods`, `cook-swh-fods`, `build-swh-fods`, `request-archiving` | Base directory for the default checkpoint file. |
 | `HOME` | checkpoint code | Fallback for `XDG_CACHE_HOME`. |

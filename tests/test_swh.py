@@ -241,3 +241,78 @@ def test_wait_for_vault_flat_raises_on_timeout(monkeypatch):
     monkeypatch.setattr("nix_fod_swh_checker.swh.time.sleep", lambda *_: None)
     with pytest.raises(VaultCookingError, match="timed out"):
         client.wait_for_vault_flat(swhid, timeout=0.0)
+
+
+def _save_request_json(
+    request_id=42,
+    origin_url="https://example.com/repo.git",
+    visit_type="git",
+    save_request_status="accepted",
+    save_task_status="pending",
+):
+    return {
+        "id": request_id,
+        "request_url": f"https://archive.softwareheritage.org/api/1/origin/save/{request_id}/",
+        "origin_url": origin_url,
+        "visit_type": visit_type,
+        "save_request_date": "2026-08-13T00:00:00Z",
+        "save_request_status": save_request_status,
+        "save_task_status": save_task_status,
+        "visit_date": None,
+        "visit_status": None,
+        "note": None,
+        "snapshot_swhid": None,
+        "snapshot_url": None,
+        "from_webhook": False,
+        "webhook_origin": None,
+    }
+
+
+def test_request_origin_save_posts_with_query_params(monkeypatch):
+    client = SWHClient(min_delay=0)
+    calls = []
+
+    def capture(method, url, timeout, **kw):
+        calls.append((method, url, kw.get("params")))
+        return FakeResponse(201, _save_request_json())
+
+    monkeypatch.setattr(client.session, "request", capture)
+    request = client.request_origin_save("https://example.com/repo.git", visit_type="git")
+    assert request.origin_url == "https://example.com/repo.git"
+    assert request.visit_type == "git"
+    assert request.save_request_status == "accepted"
+    assert calls == [("POST", "https://archive.softwareheritage.org/api/1/origin/save/", {"origin_url": "https://example.com/repo.git", "visit_type": "git"})]
+
+
+def test_request_origin_save_defaults_to_tarball(monkeypatch):
+    client = SWHClient(min_delay=0)
+
+    def capture(method, url, timeout, **kw):
+        return FakeResponse(201, _save_request_json(visit_type="tarball", save_task_status="not created"))
+
+    monkeypatch.setattr(client.session, "request", capture)
+    request = client.request_origin_save("https://example.com/archive.tar.gz")
+    assert request.visit_type == "tarball"
+
+
+def test_request_origin_save_raises_on_blocked_origin(monkeypatch):
+    client = SWHClient(min_delay=0)
+    monkeypatch.setattr(
+        client.session,
+        "request",
+        lambda method, url, timeout, **kw: FakeResponse(403),
+    )
+    with pytest.raises(SWHError, match="blocked"):
+        client.request_origin_save("https://blocked.example.com/")
+
+
+def test_get_origin_save_request_returns_status(monkeypatch):
+    client = SWHClient(min_delay=0)
+    monkeypatch.setattr(
+        client.session,
+        "request",
+        lambda method, url, timeout, **kw: FakeResponse(200, _save_request_json(request_id=7, save_task_status="succeeded")),
+    )
+    request = client.get_origin_save_request(7)
+    assert request.id == 7
+    assert request.save_task_status == "succeeded"

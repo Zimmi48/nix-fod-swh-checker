@@ -461,6 +461,7 @@ def iter_fixed_output_derivations(
                 method=_output_method(output, env),
                 hash_algo=output.get("hashAlgo"),
                 hash_hex=hash_hex,
+                origin_urls=_extract_origin_urls(env),
             )
 
 
@@ -472,3 +473,18 @@ def _output_method(output: dict, env: dict) -> str | None:
     if output_hash_mode == "recursive":
         return "nar"
     return output_hash_mode or None
+
+
+def _extract_origin_urls(env: dict) -> list[str]:
+    """Return the upstream origin URLs declared in a FOD's environment.
+
+    Nix download helpers such as ``fetchurl`` and ``fetchzip`` store their
+    URLs in the ``url`` or ``urls`` environment variables.  Multiple URLs
+    are whitespace-separated in ``urls``.
+    """
+    urls: list[str] = []
+    if "urls" in env:
+        urls.extend(env["urls"].split())
+    if "url" in env:
+        urls.append(env["url"])
+    return urls

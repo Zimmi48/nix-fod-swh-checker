@@ -70,9 +70,11 @@ def test_iter_fixed_output_derivations_filters_non_fods():
     flat_fod = next(f for f in fods if f.method == "flat")
     assert flat_fod.hash_algo == "sha256"
     assert flat_fod.label == "/nix/store/ccc-hello-2.10.tar.gz.drv"
+    assert flat_fod.origin_urls == ["https://ftp.gnu.org/gnu/hello/hello-2.10.tar.gz"]
 
     nar_fod = next(f for f in fods if f.method == "nar")
     assert nar_fod.hash_algo == "sha256"
+    assert nar_fod.origin_urls == ["https://example.com/source.tar.gz"]
 
 
 def test_iter_fixed_output_derivations_labels_non_out_output():
@@ -100,7 +102,7 @@ def test_iter_fixed_output_derivations_falls_back_to_output_hash_mode():
     derivations = {
         "/nix/store/flat.drv": {
             "name": "flat",
-            "env": {"outputHashMode": "flat"},
+            "env": {"outputHashMode": "flat", "urls": "https://a.tld/x https://b.tld/x"},
             "outputs": {
                 "out": {
                     "path": "/nix/store/flat-out",
@@ -123,7 +125,9 @@ def test_iter_fixed_output_derivations_falls_back_to_output_hash_mode():
     }
     flat_fod, recursive_fod = list(iter_fixed_output_derivations(derivations))
     assert flat_fod.method == "flat"
+    assert flat_fod.origin_urls == ["https://a.tld/x", "https://b.tld/x"]
     assert recursive_fod.method == "nar"
+    assert recursive_fod.origin_urls == []
 
 
 def test_iter_fixed_output_derivations_ignores_non_derivation_metadata():

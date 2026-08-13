@@ -114,6 +114,7 @@ def _check_via_content_hash(
             detail=f"content lookup by {fod.hash_algo}:{fod.hash_hex}",
             swhid=swhid,
             swh_url=swh_url,
+            origin_urls=fod.origin_urls,
         )
     disarchive_result = try_disarchive(
         fod,
@@ -125,12 +126,18 @@ def _check_via_content_hash(
         on_log=on_log,
     )
     if disarchive_result is not None:
+        if disarchive_result.origin_urls is None:
+            disarchive_result.origin_urls = []
+        disarchive_result.origin_urls = list(
+            dict.fromkeys(disarchive_result.origin_urls + fod.origin_urls)
+        )
         return disarchive_result
     return SWHCheckResult(
         fod=fod,
         known=False,
         method=SWHLookupMethod.CONTENT_HASH,
         detail=f"content lookup by {fod.hash_algo}:{fod.hash_hex}",
+        origin_urls=fod.origin_urls,
     )
 
 
@@ -158,6 +165,7 @@ def _check_via_swhid(
             detail=f"known as {', '.join(known_swhids)}",
             swhid=swhid,
             swh_url=f"{_ARCHIVE_URL}/{swhid}",
+            origin_urls=fod.origin_urls,
         )
     disarchive_result = try_disarchive(
         fod,
@@ -169,12 +177,18 @@ def _check_via_swhid(
         on_log=on_log,
     )
     if disarchive_result is not None:
+        if disarchive_result.origin_urls is None:
+            disarchive_result.origin_urls = []
+        disarchive_result.origin_urls = list(
+            dict.fromkeys(disarchive_result.origin_urls + fod.origin_urls)
+        )
         return disarchive_result
     return SWHCheckResult(
         fod=fod,
         known=False,
         method=SWHLookupMethod.SWHID_KNOWN,
         detail=f"neither {candidates[0]} nor {candidates[1]} are known",
+        origin_urls=fod.origin_urls,
     )
 
 
@@ -196,6 +210,7 @@ def _check_via_build_and_identify(
             known=None,
             method=SWHLookupMethod.UNDETERMINED,
             detail=f"could not realise FOD to compute its SWHID: {exc}",
+            origin_urls=fod.origin_urls,
         )
 
     try:
@@ -211,6 +226,7 @@ def _check_via_build_and_identify(
             known=None,
             method=SWHLookupMethod.UNDETERMINED,
             detail=f"built {out_path} but could not compute its SWHID: {exc}",
+            origin_urls=fod.origin_urls,
         )
 
     known = client.lookup_known_swhids([swhid]).get(swhid, False)
@@ -221,4 +237,5 @@ def _check_via_build_and_identify(
         detail=f"built {out_path} and computed {swhid}",
         swhid=swhid,
         swh_url=f"{_ARCHIVE_URL}/{swhid}" if known else None,
+        origin_urls=fod.origin_urls,
     )
