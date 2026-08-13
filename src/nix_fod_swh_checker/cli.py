@@ -265,6 +265,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="only report FODs that are not known to Software Heritage (or undetermined)",
     )
     check_parser.add_argument(
+        "--retry-unknown",
+        action="store_true",
+        help="re-check FODs that were previously reported as unknown",
+    )
+    check_parser.add_argument(
+        "--retry-undetermined",
+        action="store_true",
+        help="re-check FODs that were previously reported as undetermined",
+    )
+    check_parser.add_argument(
         "--quiet",
         "-q",
         action="store_true",
@@ -402,14 +412,25 @@ def _run_check_command(args: argparse.Namespace) -> int:
         ) as client:
             total = len(fods)
             for index, fod in enumerate(fods, start=1):
-                if fod.label in checked:
+                previous = checked.get(fod.label)
+                if previous is not None:
+                    should_retry = (
+                        (args.retry_unknown and previous.known is False)
+                        or (args.retry_undetermined and previous.known is None)
+                    )
+                    if not should_retry:
+                        if on_log:
+                            on_log(
+                                f"[{index}/{total}] {fod.label}: already checked "
+                                f"({_STATUS_LABELS[previous.known]}), skipping"
+                            )
+                        continue
                     if on_log:
                         on_log(
                             f"[{index}/{total}] {fod.label}: already checked "
-                            f"({_STATUS_LABELS[checked[fod.label].known]}), skipping"
+                            f"({_STATUS_LABELS[previous.known]}), retrying"
                         )
-                    continue
-                if on_log:
+                elif on_log:
                     on_log(f"[{index}/{total}] checking {fod.label}")
                 try:
                     result = check_fod(

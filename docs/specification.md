@@ -48,7 +48,7 @@ The command performs the following steps:
 6. Save each result to a checkpoint file as it is computed, unless `--no-checkpoint` is given.
 7. Print a human-readable report, or write JSON results to the path given with `-o`/`--output`.
 
-If the checkpoint already contains results for some FODs, those FODs are skipped and only the missing ones are checked.
+If the checkpoint already contains results for some FODs, those FODs are skipped and only the missing ones are checked, unless `--retry-unknown` or `--retry-undetermined` is given.
 
 #### `check` options
 
@@ -56,6 +56,8 @@ If the checkpoint already contains results for some FODs, those FODs are skipped
 |--------|---------|-------------|
 | `-o`, `--output` `<path>` | none | Write machine-readable JSON results to `<path>` instead of printing the human-readable report. The file is overwritten if it exists. A trailing newline is appended. |
 | `--only-unknown` | false | In the human-readable report, only show FODs whose `known` status is not `true` (i.e. unknown or undetermined). Has no effect when `-o`/`--output` is used. |
+| `--retry-unknown` | false | Re-check FODs that were previously reported as unknown. Useful after requesting archiving of missing origins to see whether the FODs have since been added to Software Heritage. |
+| `--retry-undetermined` | false | Re-check FODs that were previously reported as undetermined. Useful when retrying a previous check with a different timeout value for instance. |
 | `-q`, `--quiet` | false | Suppress stderr progress messages. Warnings and errors are still printed. |
 | `--checkpoint-file` `<path>` | per-installable cache file | Read from and write to the given checkpoint file. See [Checkpoint file](#checkpoint-file). |
 | `--no-checkpoint` | false | Do not read or write a checkpoint file. |

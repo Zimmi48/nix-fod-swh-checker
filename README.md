@@ -75,6 +75,8 @@ The command reads the checkpoint produced by `check` and considers each unknown 
 
 FODs with no usable URL, or whose URLs are all unreachable, are skipped with a warning. FODs produced by complex build steps typically fall into this category.
 
+After requesting archiving and giving some time for the archiving to complete, you may re-run `check --retry-unknown` to check whether the previously unknown FODs are now available in Software Heritage.
+
 ### 3. Generate SWH-backed FODs
 
 ```console

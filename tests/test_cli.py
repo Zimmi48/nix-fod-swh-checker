@@ -271,6 +271,138 @@ def test_check_resumes_from_existing_checkpoint(monkeypatch, capsys, tmp_path):
     assert checked == [fod_b.label]
 
 
+def test_check_retry_unknown_rechecks_unknown_fods(monkeypatch, capsys, tmp_path):
+    fod_known = _fod("known")
+    fod_unknown = _fod("unknown")
+    fod_undetermined = _fod("undetermined")
+    checkpoint = tmp_path / "ckpt.json"
+    from nix_fod_swh_checker.checkpoint import save_checkpoint
+
+    save_checkpoint(
+        checkpoint,
+        "nixpkgs#hello",
+        {
+            fod_known.label: SWHCheckResult(
+                fod=fod_known, known=True, method=SWHLookupMethod.CONTENT_HASH, detail="known"
+            ),
+            fod_unknown.label: SWHCheckResult(
+                fod=fod_unknown,
+                known=False,
+                method=SWHLookupMethod.CONTENT_HASH,
+                detail="not known",
+            ),
+            fod_undetermined.label: SWHCheckResult(
+                fod=fod_undetermined,
+                known=None,
+                method=SWHLookupMethod.UNDETERMINED,
+                detail="timed out",
+            ),
+        },
+    )
+
+    checked: list[str] = []
+
+    def fake_check_fod(fod, *args, **kwargs):
+        checked.append(fod.label)
+        return SWHCheckResult(
+            fod=fod, known=True, method=SWHLookupMethod.CONTENT_HASH, detail="now known"
+        )
+
+    monkeypatch.setattr(cli, "show_derivations_recursive", lambda *a, **k: {})
+    monkeypatch.setattr(
+        cli,
+        "iter_fixed_output_derivations",
+        lambda d: iter([fod_known, fod_unknown, fod_undetermined]),
+    )
+    monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: _NullContextClient())
+    monkeypatch.setattr(cli, "check_fod", fake_check_fod)
+
+    exit_code = cli.main(
+        [
+            "check",
+            "nixpkgs#hello",
+            "--checkpoint-file",
+            str(checkpoint),
+            "--quiet",
+            "--retry-unknown",
+        ]
+    )
+    assert exit_code == 0
+    assert checked == [fod_unknown.label]
+
+    saved = json.loads(checkpoint.read_text())
+    assert saved["results"][fod_unknown.label]["known"] is True
+    assert saved["results"][fod_unknown.label]["detail"] == "now known"
+    assert saved["results"][fod_known.label]["known"] is True
+    assert saved["results"][fod_undetermined.label]["known"] is None
+
+
+def test_check_retry_undetermined_rechecks_undetermined_fods(monkeypatch, capsys, tmp_path):
+    fod_known = _fod("known")
+    fod_unknown = _fod("unknown")
+    fod_undetermined = _fod("undetermined")
+    checkpoint = tmp_path / "ckpt.json"
+    from nix_fod_swh_checker.checkpoint import save_checkpoint
+
+    save_checkpoint(
+        checkpoint,
+        "nixpkgs#hello",
+        {
+            fod_known.label: SWHCheckResult(
+                fod=fod_known, known=True, method=SWHLookupMethod.CONTENT_HASH, detail="known"
+            ),
+            fod_unknown.label: SWHCheckResult(
+                fod=fod_unknown,
+                known=False,
+                method=SWHLookupMethod.CONTENT_HASH,
+                detail="not known",
+            ),
+            fod_undetermined.label: SWHCheckResult(
+                fod=fod_undetermined,
+                known=None,
+                method=SWHLookupMethod.UNDETERMINED,
+                detail="timed out",
+            ),
+        },
+    )
+
+    checked: list[str] = []
+
+    def fake_check_fod(fod, *args, **kwargs):
+        checked.append(fod.label)
+        return SWHCheckResult(
+            fod=fod, known=True, method=SWHLookupMethod.CONTENT_HASH, detail="now known"
+        )
+
+    monkeypatch.setattr(cli, "show_derivations_recursive", lambda *a, **k: {})
+    monkeypatch.setattr(
+        cli,
+        "iter_fixed_output_derivations",
+        lambda d: iter([fod_known, fod_unknown, fod_undetermined]),
+    )
+    monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: _NullContextClient())
+    monkeypatch.setattr(cli, "check_fod", fake_check_fod)
+
+    exit_code = cli.main(
+        [
+            "check",
+            "nixpkgs#hello",
+            "--checkpoint-file",
+            str(checkpoint),
+            "--quiet",
+            "--retry-undetermined",
+        ]
+    )
+    assert exit_code == 0
+    assert checked == [fod_undetermined.label]
+
+    saved = json.loads(checkpoint.read_text())
+    assert saved["results"][fod_undetermined.label]["known"] is True
+    assert saved["results"][fod_undetermined.label]["detail"] == "now known"
+    assert saved["results"][fod_known.label]["known"] is True
+    assert saved["results"][fod_unknown.label]["known"] is False
+
+
 def test_check_swh_error_in_loop_is_warning_not_fatal(monkeypatch, capsys, tmp_path):
     fod = _fod("a")
 
