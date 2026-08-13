@@ -43,7 +43,6 @@ jobs:
           nix run .#nix-fod-swh-check -- check nixpkgs#hello \
             -o check-results.json \
             --no-checkpoint \
-            --swh-api-token "$SWH_API_TOKEN" \
             --swh-identify-timeout 10 \
             --disarchive-timeout 10
 
