@@ -152,6 +152,36 @@ def test_check_fod_nar_method_unknown_swhid(monkeypatch, tmp_path):
     assert result.swh_url is None
 
 
+def test_check_fod_flat_realise_failure_is_undetermined(monkeypatch):
+    fod = make_fod(method="flat", hash_algo="sha256", hash_hex="3" * 64)
+
+    def fail_realise(fod, *, nix_binary, on_log=None):
+        raise NixCommandError("boom")
+
+    monkeypatch.setattr(disarchive_module, "realise_fod", fail_realise)
+
+    client = FakeSWHClient(content_known=False)
+    result = check_fod(fod, client)
+    assert result.known is None
+    assert result.method == SWHLookupMethod.UNDETERMINED
+    assert "could not realise" in result.detail
+
+
+def test_check_fod_git_realise_failure_is_undetermined(monkeypatch):
+    fod = make_fod(method="git", hash_algo="sha1", hash_hex="3" * 40)
+
+    def fail_realise(fod, *, nix_binary, on_log=None):
+        raise NixCommandError("boom")
+
+    monkeypatch.setattr(disarchive_module, "realise_fod", fail_realise)
+
+    client = FakeSWHClient()
+    result = check_fod(fod, client)
+    assert result.known is None
+    assert result.method == SWHLookupMethod.UNDETERMINED
+    assert "could not realise" in result.detail
+
+
 def test_check_fod_nar_method_build_failure_is_undetermined(monkeypatch):
     fod = make_fod(method="nar", hash_algo="sha256", hash_hex="3" * 64)
 

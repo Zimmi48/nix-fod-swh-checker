@@ -132,11 +132,14 @@ def _check_via_content_hash(
             dict.fromkeys(disarchive_result.origin_urls + fod.origin_urls)
         )
         return disarchive_result
+    # try_disarchive returning None means the FOD could not be realised,
+    # is not an archive, or could not be unpacked. This is not the same as
+    # Software Heritage not knowing the content, so report it as undetermined.
     return SWHCheckResult(
         fod=fod,
-        known=False,
-        method=SWHLookupMethod.CONTENT_HASH,
-        detail=f"content lookup by {fod.hash_algo}:{fod.hash_hex}",
+        known=None,
+        method=SWHLookupMethod.UNDETERMINED,
+        detail=f"content lookup by {fod.hash_algo}:{fod.hash_hex} failed; could not realise or unpack the FOD for disarchive",
         origin_urls=fod.origin_urls,
     )
 
@@ -183,11 +186,14 @@ def _check_via_swhid(
             dict.fromkeys(disarchive_result.origin_urls + fod.origin_urls)
         )
         return disarchive_result
+    # try_disarchive returning None means the FOD could not be realised,
+    # is not an archive, or could not be unpacked. This is not the same as
+    # Software Heritage not knowing the content, so report it as undetermined.
     return SWHCheckResult(
         fod=fod,
-        known=False,
-        method=SWHLookupMethod.SWHID_KNOWN,
-        detail=f"neither {candidates[0]} nor {candidates[1]} are known",
+        known=None,
+        method=SWHLookupMethod.UNDETERMINED,
+        detail=f"neither {candidates[0]} nor {candidates[1]} are known; could not realise or unpack the FOD for disarchive",
         origin_urls=fod.origin_urls,
     )
 
