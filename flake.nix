@@ -41,6 +41,9 @@
       {
         packages.default = nix-fod-swh-checker;
         packages.nix-fod-swh-checker = nix-fod-swh-checker;
+        # Re-export the locked nixpkgs input's hello package so the
+        # integration job can use a reproducible, pinned installable.
+        packages.hello = nixpkgs.legacyPackages.${system}.hello;
 
         checks.default = nix-fod-swh-checker;
 
