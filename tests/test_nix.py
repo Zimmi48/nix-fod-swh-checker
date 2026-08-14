@@ -131,6 +131,29 @@ def test_iter_fixed_output_derivations_falls_back_to_output_hash_mode():
     assert recursive_fod.origin_urls == []
 
 
+def test_iter_fixed_output_derivations_normalizes_recursive_method():
+    # Some Nix implementations/versions (e.g. Determinate Nix) emit the raw
+    # outputHashMode value "recursive" in outputs.<name>.method instead of
+    # the normalized "nar" name. It must be treated like "nar".
+    derivations = {
+        "/nix/store/recursive-method.drv": {
+            "name": "recursive-method",
+            "env": {},
+            "outputs": {
+                "out": {
+                    "path": "/nix/store/recursive-method-out",
+                    "hashAlgo": "sha256",
+                    "hash": "dd" * 32,
+                    "method": "recursive",
+                }
+            },
+        },
+    }
+
+    (fod,) = list(iter_fixed_output_derivations(derivations))
+    assert fod.method == "nar"
+
+
 def test_iter_fixed_output_derivations_ignores_non_derivation_metadata():
     derivations = {
         "version": 3,

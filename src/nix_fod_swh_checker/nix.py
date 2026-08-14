@@ -472,6 +472,11 @@ def iter_fixed_output_derivations(
 def _output_method(output: dict, env: dict) -> str | None:
     method = output.get("method")
     if method:
+        # Nix versions vary in whether they emit the normalized method name
+        # ("nar") or the raw outputHashMode value ("recursive"). Normalize
+        # to the names the checker expects.
+        if method == "recursive":
+            return "nar"
         return method
     output_hash_mode = env.get("outputHashMode")
     if output_hash_mode == "recursive":
