@@ -46,7 +46,7 @@ The command performs the following steps:
 4. Choose a comparison strategy based on its `method` and hash algorithm (see [internals.md](internals.md#comparison-strategies)).
 5. Query the Software Heritage API.
 6. Save each result to a checkpoint file as it is computed, unless `--no-checkpoint` is given.
-7. Print a human-readable report, or write JSON results to the path given with `-o`/`--output`.
+7. Print a human-readable report. If `-o`/`--output` is given, also write JSON results to the given path.
 
 If the checkpoint already contains results for some FODs, those FODs are skipped and only the missing ones are checked, unless `--retry-unknown` or `--retry-undetermined` is given.
 
@@ -54,11 +54,11 @@ If the checkpoint already contains results for some FODs, those FODs are skipped
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `-o`, `--output` `<path>` | none | Write machine-readable JSON results to `<path>` instead of printing the human-readable report. The file is overwritten if it exists. A trailing newline is appended. |
-| `--only-unknown` | false | In the human-readable report, only show FODs whose `known` status is not `true` (i.e. unknown or undetermined). Has no effect when `-o`/`--output` is used. |
+| `-o`, `--output` `<path>` | none | Write machine-readable JSON results to `<path>`. The human-readable report is still printed to stdout unless `--quiet` is given. The file is overwritten if it exists. A trailing newline is appended. |
+| `--only-unknown` | false | In the human-readable report, only show FODs whose `known` status is not `true` (i.e. unknown or undetermined). |
 | `--retry-unknown` | false | Re-check FODs that were previously reported as unknown. Useful after requesting archiving of missing origins to see whether the FODs have since been added to Software Heritage. |
 | `--retry-undetermined` | false | Re-check FODs that were previously reported as undetermined. Useful when retrying a previous check with a different timeout value for instance. |
-| `-q`, `--quiet` | false | Suppress stderr progress messages. Warnings and errors are still printed. |
+| `-q`, `--quiet` | false | Suppress stderr progress messages and the human-readable report. Warnings and errors are still printed. |
 | `--checkpoint-file` `<path>` | per-installable cache file | Read from and write to the given checkpoint file. See [Checkpoint file](#checkpoint-file). |
 | `--no-checkpoint` | false | Do not read or write a checkpoint file. |
 | `--swh-api-url` `<url>` | `https://archive.softwareheritage.org/api/1` | Base URL of the Software Heritage API. |
@@ -69,7 +69,7 @@ If the checkpoint already contains results for some FODs, those FODs are skipped
 
 #### `check` human-readable report
 
-When `-o`/`--output` is not given, the report printed to stdout has the following form:
+The report printed to stdout has the following form (it is suppressed when `--quiet` is given):
 
 ```
 [KNOWN] <drv-path>[^<output>]

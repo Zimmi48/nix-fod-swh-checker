@@ -278,7 +278,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--quiet",
         "-q",
         action="store_true",
-        help="do not print progress messages to stderr while checking FODs",
+        help="do not print progress messages to stderr or the human-readable report while checking FODs",
     )
     check_parser.add_argument(
         "--checkpoint-file",
@@ -458,7 +458,8 @@ def _run_check_command(args: argparse.Namespace) -> int:
             Path(args.output).write_text(
                 json.dumps([_result_to_dict(r) for r in results], indent=2) + "\n"
             )
-        else:
+
+        if not args.quiet:
             _print_report(results)
 
         return 0

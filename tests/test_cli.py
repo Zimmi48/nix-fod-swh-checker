@@ -195,6 +195,52 @@ def test_check_writes_json_output_with_all_documented_fields(monkeypatch, tmp_pa
     assert fod_obj["origin_urls"] == []
 
 
+def test_check_output_prints_report_unless_quiet(monkeypatch, capsys, tmp_path):
+    fod = _fod("a")
+    result = SWHCheckResult(
+        fod=fod, known=True, method=SWHLookupMethod.CONTENT_HASH, detail="known"
+    )
+
+    monkeypatch.setattr(cli, "show_derivations_recursive", lambda *a, **k: {})
+    monkeypatch.setattr(cli, "iter_fixed_output_derivations", lambda d: iter([fod]))
+    monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: _NullContextClient())
+    monkeypatch.setattr(cli, "check_fod", lambda *a, **k: result)
+    monkeypatch.setattr(cli, "default_checkpoint_path", lambda installable: tmp_path / "ckpt.json")
+
+    output = tmp_path / "results.json"
+    exit_code = cli.main(
+        ["check", "nixpkgs#hello", "--no-checkpoint", "-o", str(output)]
+    )
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "[KNOWN]" in out
+    assert "1 FOD(s) checked: 1 known, 0 known after disarchive, 0 unknown, 0 undetermined" in out
+    assert json.loads(output.read_text())
+
+
+def test_check_output_with_quiet_does_not_print_report(monkeypatch, capsys, tmp_path):
+    fod = _fod("a")
+    result = SWHCheckResult(
+        fod=fod, known=True, method=SWHLookupMethod.CONTENT_HASH, detail="known"
+    )
+
+    monkeypatch.setattr(cli, "show_derivations_recursive", lambda *a, **k: {})
+    monkeypatch.setattr(cli, "iter_fixed_output_derivations", lambda d: iter([fod]))
+    monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: _NullContextClient())
+    monkeypatch.setattr(cli, "check_fod", lambda *a, **k: result)
+    monkeypatch.setattr(cli, "default_checkpoint_path", lambda installable: tmp_path / "ckpt.json")
+
+    output = tmp_path / "results.json"
+    exit_code = cli.main(
+        ["check", "nixpkgs#hello", "--quiet", "--no-checkpoint", "-o", str(output)]
+    )
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "[KNOWN]" not in out
+    assert "FOD(s) checked" not in out
+    assert json.loads(output.read_text())
+
+
 def test_check_only_unknown_filters_report(monkeypatch, capsys, tmp_path):
     fod_known = _fod("known")
     fod_unknown = _fod("unknown")
@@ -217,7 +263,7 @@ def test_check_only_unknown_filters_report(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(cli, "default_checkpoint_path", lambda installable: tmp_path / "ckpt.json")
 
     exit_code = cli.main(
-        ["check", "nixpkgs#hello", "--quiet", "--no-checkpoint", "--only-unknown"]
+        ["check", "nixpkgs#hello", "--no-checkpoint", "--only-unknown"]
     )
     out = capsys.readouterr().out
     assert exit_code == 0
@@ -414,7 +460,7 @@ def test_check_swh_error_in_loop_is_warning_not_fatal(monkeypatch, capsys, tmp_p
     monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: _NullContextClient())
     monkeypatch.setattr(cli, "check_fod", fake_check_fod)
 
-    exit_code = cli.main(["check", "nixpkgs#hello", "--quiet", "--no-checkpoint"])
+    exit_code = cli.main(["check", "nixpkgs#hello", "--no-checkpoint"])
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "warning: API down" in captured.err
