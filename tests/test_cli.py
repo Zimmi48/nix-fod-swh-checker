@@ -782,6 +782,8 @@ def test_request_archiving_dry_run_lists_unknown_origins(capsys, tmp_path):
     )
     fod_known = _fod("known")
     fod_known.origin_urls = ["https://example.com/known.tar.gz"]
+    fod_undetermined = _fod("undetermined")
+    fod_undetermined.origin_urls = ["https://example.com/undetermined.tar.gz"]
 
     checkpoint = tmp_path / "ckpt.json"
     from nix_fod_swh_checker.checkpoint import save_checkpoint
@@ -811,6 +813,13 @@ def test_request_archiving_dry_run_lists_unknown_origins(capsys, tmp_path):
                 detail="known",
                 origin_urls=fod_known.origin_urls,
             ),
+            fod_undetermined.label: SWHCheckResult(
+                fod=fod_undetermined,
+                known=None,
+                method=SWHLookupMethod.UNDETERMINED,
+                detail="could not determine",
+                origin_urls=fod_undetermined.origin_urls,
+            ),
         },
     )
 
@@ -828,6 +837,7 @@ def test_request_archiving_dry_run_lists_unknown_origins(capsys, tmp_path):
     assert "https://example.com/archive.tar.gz (tarball)" in out
     assert "https://example.com/repo.git (git)" in out
     assert "https://example.com/known.tar.gz" not in out
+    assert "https://example.com/undetermined.tar.gz" not in out
 
 
 def test_request_archiving_submits_requests_for_unknown_origins(monkeypatch, capsys, tmp_path):
