@@ -19,7 +19,10 @@ from .models import FixedOutputDerivation
 
 # Strip ANSI escape sequences (colors, cursor movements, etc.) from terminal
 # output so we can extract the plain store path printed by nix build.
-_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+# The character class includes '?' so that DEC private sequences such as
+# \\x1b[?25l (hide cursor) and \\x1b[?25h (show cursor), which Determinate
+# Nix emits on its progress UI, are also removed.
+_ANSI_ESCAPE = re.compile(r"\x1b\[[\?0-9;]*[a-zA-Z]")
 
 
 class NixCommandError(RuntimeError):
@@ -415,7 +418,8 @@ def _run_nix_pty(
 
 def _last_store_path(text: str) -> str | None:
     """Return the last token that looks like a Nix store path, if any."""
-    for token in reversed(text.split()):
+    clean_text = _ANSI_ESCAPE.sub("", text)
+    for token in reversed(clean_text.split()):
         if token.startswith("/nix/store/"):
             return token
     return None
