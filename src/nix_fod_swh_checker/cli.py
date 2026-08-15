@@ -722,10 +722,13 @@ def _run_request_archiving_command(args: argparse.Namespace) -> int:
 
     on_log = None if args.quiet else _log_to_stderr
 
-    # Collect (visit_type, url) pairs for FODs that are not known to SWH.
+    # Collect (visit_type, url) pairs for FODs that are unknown to SWH.
+    # Only strictly UNKNOWN results are requested for archiving; UNDETERMINED
+    # results (e.g. failed realisations or lookups) are skipped because there
+    # is no confirmation that SWH actually lacks the source.
     origins: dict[tuple[str, str], list[SWHCheckResult]] = {}
     for result in results:
-        if result.known is True:
+        if result.known is not False:
             continue
         if not result.origin_urls:
             print(
