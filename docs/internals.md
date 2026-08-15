@@ -63,7 +63,13 @@ nix derivation show --recursive <installable>
 
 The JSON output is normalized so that both full store paths and basename-only keys are accepted. Non-derivation entries are dropped.
 
-`nix.py:iter_fixed_output_derivations` walks every derivation's `outputs` mapping. An output is considered a FOD exactly when it has a non-empty `hash` field. The `method` is taken from `output.method`; if that is missing, the legacy `env.outputHashMode` is used, with `recursive` mapped to `nar`.
+`nix.py:iter_fixed_output_derivations` walks every derivation's `outputs` mapping. An output is considered a FOD exactly when it has a non-empty `hash` field.
+
+Because Nix implementations and versions differ in how they serialize FOD metadata, the extraction normalizes several fields:
+
+- `method` is taken from `output.method`. If that is missing, the legacy `env.outputHashMode` is used, with `recursive` mapped to `nar`. Some Nix implementations emit the raw value `recursive` in `output.method`; that is normalized to `nar` as well. If both are missing, the hash format is used as a last resort: SRI hashes (`<algo>-<base64>`) indicate recursive/NAR mode, while a plain hex string indicates `flat` mode.
+- `hash_algo` is taken from `output.hashAlgo`. If that is missing, `env.outputHashAlgo` is used. Nix represents recursive hashing as `r:<algo>` (e.g. `r:sha256`); the `r:` prefix is stripped. If both fields are missing or empty, the algorithm prefix of an SRI hash value (e.g. `sha256-...`) is used.
+- `hash_hex` is the raw hash value, with any SRI algorithm prefix stripped. Some Nix implementations (e.g. Determinate Nix) emit flat `sha256`/`sha512` hashes as base64 even when the value is not SRI-prefixed; those are decoded and re-encoded as hex because Software Heritage's content lookup endpoint expects hex for these algorithms.
 
 `nix.py:_extract_origin_urls` collects upstream URLs from the derivation environment: the `url` variable (single URL) and the `urls` variable (whitespace-separated mirror URLs). These are stored on `FixedOutputDerivation.origin_urls` and copied into each `SWHCheckResult`.
 
@@ -91,7 +97,9 @@ Used for all other methods (most commonly `nar`). The FOD is realised with:
 nix build --no-link --print-out-paths <drv>^<output>
 ```
 
-This fetches from substituters when possible. The resulting store path is passed to `swh identify --no-filename <path>` to compute its intrinsic SWHID, which is then looked up via `POST /known/`. Failures to realise or identify are reported as `UNDETERMINED` / `known=None`.
+This fetches from substituters when possible. The command is run on a pseudo-terminal when progress logging is enabled so that Nix renders its interactive progress bars; the raw terminal output is parsed to extract the final store path. ANSI escape sequences (including DEC private cursor sequences such as `\x1b[?25l` emitted by some Nix implementations) are stripped before parsing.
+
+The resulting store path is passed to `swh identify --no-filename <path>` to compute its intrinsic SWHID, which is then looked up via `POST /known/`. Failures to realise or identify are reported as `UNDETERMINED` / `known=None`.
 
 ### `try_disarchive`
 
