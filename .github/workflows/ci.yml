@@ -23,6 +23,47 @@ jobs:
       - name: Run flake checks
         run: nix flake check
 
+  cross-implementation:
+    runs-on: ubuntu-latest
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: upstream
+          - name: lix
+          - name: determinate
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install upstream Nix
+        if: matrix.name == 'upstream'
+        uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            accept-flake-config = true
+
+      - name: Install Lix
+        if: matrix.name == 'lix'
+        uses: samueldr/lix-gha-installer-action@latest
+        with:
+          extra_nix_config: |
+            accept-flake-config = true
+
+      - name: Install Determinate Nix
+        if: matrix.name == 'determinate'
+        uses: DeterminateSystems/nix-installer-action@v13
+        with:
+          extra-conf: |
+            accept-flake-config = true
+
+      - name: Run cross-implementation FOD parsing tests
+        run: |
+          nix develop --command pytest -q tests/test_nix_implementations.py
+        env:
+          NIX_BINARY: nix
+
   integration:
     runs-on: ubuntu-latest
     needs: test

@@ -11,3 +11,4 @@ build/
 .direnv/
 swh-backed-fods.nix
 result
+results.json

@@ -8,6 +8,7 @@ from nix_fod_swh_checker.models import FixedOutputDerivation
 from nix_fod_swh_checker.nix import (
     DryRunPlan,
     NixCommandError,
+    _last_store_path,
     build_nix_file,
     dry_run_nix_file,
     iter_fixed_output_derivations,
@@ -130,6 +131,29 @@ def test_iter_fixed_output_derivations_falls_back_to_output_hash_mode():
     assert recursive_fod.origin_urls == []
 
 
+def test_iter_fixed_output_derivations_normalizes_recursive_method():
+    # Some Nix implementations/versions (e.g. Determinate Nix) emit the raw
+    # outputHashMode value "recursive" in outputs.<name>.method instead of
+    # the normalized "nar" name. It must be treated like "nar".
+    derivations = {
+        "/nix/store/recursive-method.drv": {
+            "name": "recursive-method",
+            "env": {},
+            "outputs": {
+                "out": {
+                    "path": "/nix/store/recursive-method-out",
+                    "hashAlgo": "sha256",
+                    "hash": "dd" * 32,
+                    "method": "recursive",
+                }
+            },
+        },
+    }
+
+    (fod,) = list(iter_fixed_output_derivations(derivations))
+    assert fod.method == "nar"
+
+
 def test_iter_fixed_output_derivations_ignores_non_derivation_metadata():
     derivations = {
         "version": 3,
@@ -149,6 +173,117 @@ def test_iter_fixed_output_derivations_ignores_non_derivation_metadata():
     (fod,) = list(iter_fixed_output_derivations(derivations))
     assert fod.drv_path == "/nix/store/fod.drv"
     assert fod.hash_hex == "cc" * 32
+
+
+def test_iter_fixed_output_derivations_falls_back_hash_algo_to_env():
+    # Some Nix implementations/versions (e.g. Determinate Nix) leave
+    # outputs.<name>.hashAlgo empty and put the algorithm in
+    # env.outputHashAlgo instead.
+    derivations = {
+        "/nix/store/env-algo.drv": {
+            "name": "env-algo",
+            "env": {"outputHashAlgo": "sha256"},
+            "outputs": {
+                "out": {
+                    "path": "/nix/store/env-algo-out",
+                    "hash": "ee" * 32,
+                }
+            },
+        },
+    }
+
+    (fod,) = list(iter_fixed_output_derivations(derivations))
+    assert fod.hash_algo == "sha256"
+    assert fod.hash_hex == "ee" * 32
+
+
+def test_iter_fixed_output_derivations_extracts_algo_from_sri_hash():
+    # Some Nix implementations/versions (e.g. Determinate Nix) represent the
+    # hash as an SRI string ``<algo>-<base64>`` and leave both hashAlgo fields
+    # empty. The algorithm and raw hash must be extracted from the hash value.
+    derivations = {
+        "/nix/store/sri-hash.drv": {
+            "name": "sri-hash",
+            "env": {},
+            "outputs": {
+                "out": {
+                    "path": "/nix/store/sri-hash-out",
+                    "hash": "sha256-dGVzdA==",
+                }
+            },
+        },
+    }
+
+    (fod,) = list(iter_fixed_output_derivations(derivations))
+    assert fod.hash_algo == "sha256"
+    assert fod.hash_hex == "dGVzdA=="
+
+
+def test_iter_fixed_output_derivations_converts_base64_flat_hash_to_hex():
+    # Determinate Nix emits flat sha256 hashes as base64 even when the hash
+    # value is not SRI-prefixed. SWH expects hex, so the parser must convert.
+    import base64
+    import binascii
+
+    hex_hash = "49a5719c0cc5a072e34fff79972f18873c5ce949db3b71f7c73c86aa1d0dc3a5"
+    b64_hash = base64.b64encode(binascii.unhexlify(hex_hash)).decode()
+    derivations = {
+        "/nix/store/b64-flat.drv": {
+            "name": "b64-flat",
+            "env": {"outputHashAlgo": "sha256"},
+            "outputs": {
+                "out": {
+                    "path": "/nix/store/b64-flat-out",
+                    "hash": b64_hash,
+                }
+            },
+        },
+    }
+
+    (fod,) = list(iter_fixed_output_derivations(derivations))
+    assert fod.hash_algo == "sha256"
+    assert fod.hash_hex == hex_hash
+
+
+def test_iter_fixed_output_derivations_strips_r_prefix_from_hash_algo():
+    # Lix emits ``hashAlgo: "r:sha256"`` for recursive-hashed FODs. The ``r:``
+    # prefix must be stripped so the algorithm matches SWH's expectations.
+    derivations = {
+        "/nix/store/r-prefix.drv": {
+            "name": "r-prefix",
+            "env": {"outputHashAlgo": "r:sha256", "outputHashMode": "recursive"},
+            "outputs": {
+                "out": {
+                    "path": "/nix/store/r-prefix-out",
+                    "hash": "aa" * 32,
+                }
+            },
+        },
+    }
+
+    (fod,) = list(iter_fixed_output_derivations(derivations))
+    assert fod.method == "nar"
+    assert fod.hash_algo == "sha256"
+
+
+def test_iter_fixed_output_derivations_infers_flat_method_from_plain_hash():
+    # Lix sometimes omits both output.method and env.outputHashMode for
+    # flat-hashed FODs. A plain hex hash (no SRI prefix) means flat.
+    derivations = {
+        "/nix/store/flat-no-mode.drv": {
+            "name": "flat-no-mode",
+            "env": {},
+            "outputs": {
+                "out": {
+                    "path": "/nix/store/flat-no-mode-out",
+                    "hash": "aa" * 32,
+                }
+            },
+        },
+    }
+
+    (fod,) = list(iter_fixed_output_derivations(derivations))
+    assert fod.method == "flat"
 
 
 def test_show_derivations_recursive_parses_json(monkeypatch):
@@ -354,6 +489,16 @@ def test_realise_fod_no_output_paths(monkeypatch):
     monkeypatch.setattr(subprocess, "run", fake_run)
     with pytest.raises(NixCommandError, match="produced no output path"):
         realise_fod(fod)
+
+
+def test_last_store_path_strips_ansi_escape_sequences():
+    # Nix progress output can contain colour codes and DEC private cursor
+    # sequences (e.g. \\x1b[?25l hide cursor). The helper must ignore them
+    # and return the actual store path.
+    store_path = "/nix/store/abc-hello-2.12.3.tar.gz"
+    assert _last_store_path(f"\x1b[32m{store_path}\x1b[0m") == store_path
+    assert _last_store_path(f"\x1b[?25l{store_path}\x1b[?25h") == store_path
+    assert _last_store_path(f"\x1b[?25l\r\x1b[32m{store_path}\x1b[0m\x1b[?25h") == store_path
 
 
 def _fake_popen_factory(calls, returncode=0, stderr=""):

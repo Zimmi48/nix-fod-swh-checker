@@ -19,7 +19,10 @@ from .models import FixedOutputDerivation
 
 # Strip ANSI escape sequences (colors, cursor movements, etc.) from terminal
 # output so we can extract the plain store path printed by nix build.
-_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+# The character class includes '?' so that DEC private sequences such as
+# \\x1b[?25l (hide cursor) and \\x1b[?25h (show cursor), which Determinate
+# Nix emits on its progress UI, are also removed.
+_ANSI_ESCAPE = re.compile(r"\x1b\[[\?0-9;]*[a-zA-Z]")
 
 
 class NixCommandError(RuntimeError):
@@ -415,7 +418,8 @@ def _run_nix_pty(
 
 def _last_store_path(text: str) -> str | None:
     """Return the last token that looks like a Nix store path, if any."""
-    for token in reversed(text.split()):
+    clean_text = _ANSI_ESCAPE.sub("", text)
+    for token in reversed(clean_text.split()):
         if token.startswith("/nix/store/"):
             return token
     return None
@@ -453,14 +457,15 @@ def iter_fixed_output_derivations(
             hash_hex = output.get("hash")
             if not hash_hex:
                 continue
+            hash_algo = _hash_algo(hash_hex, output.get("hashAlgo"), env.get("outputHashAlgo"))
             yield FixedOutputDerivation(
                 drv_path=drv_path,
                 output_name=output_name,
                 output_path=output.get("path"),
                 name=drv.get("name", drv_path),
                 method=_output_method(output, env),
-                hash_algo=output.get("hashAlgo"),
-                hash_hex=hash_hex,
+                hash_algo=hash_algo,
+                hash_hex=_hash_hex(hash_hex, hash_algo),
                 origin_urls=_extract_origin_urls(env),
             )
 
@@ -468,11 +473,95 @@ def iter_fixed_output_derivations(
 def _output_method(output: dict, env: dict) -> str | None:
     method = output.get("method")
     if method:
+        # Nix versions vary in whether they emit the normalized method name
+        # ("nar") or the raw outputHashMode value ("recursive"). Normalize
+        # to the names the checker expects.
+        if method == "recursive":
+            return "nar"
         return method
     output_hash_mode = env.get("outputHashMode")
     if output_hash_mode == "recursive":
         return "nar"
-    return output_hash_mode or None
+    # Some Nix implementations (e.g. Lix) leave both output.method and
+    # env.outputHashMode empty for flat-hashed FODs. In that case the only
+    # available hint is the hash format: SRI hashes ("<algo>-<base64>")
+    # correspond to recursive/NAR mode, while a plain hex string means flat.
+    hash_value = output.get("hash", "")
+    if "-" in hash_value:
+        return "nar"
+    return output_hash_mode or "flat"
+
+
+def _hash_algo(
+    hash_value: str,
+    output_hash_algo: str | None,
+    env_hash_algo: str | None,
+) -> str | None:
+    """Return the hash algorithm for a FOD output.
+
+    Newer Nix versions put the algorithm in ``outputs.<name>.hashAlgo``,
+    but older versions and some Nix implementations leave it empty and
+    instead embed the algorithm as a prefix in the ``hash`` field itself
+    (e.g. ``sha256-...``). The legacy ``env.outputHashAlgo`` is used as a
+    fallback, and the hash prefix is used as a last resort.
+
+    Nix also uses a ``r:<algo>`` form to indicate recursive/NAR hashing;
+    the ``r:`` prefix is stripped so the algorithm matches what Software
+    Heritage expects.
+    """
+    algo = output_hash_algo or env_hash_algo
+    if algo:
+        if isinstance(algo, str) and algo.startswith("r:"):
+            return algo[2:]
+        return algo
+    if hash_value and "-" in hash_value:
+        return hash_value.split("-", 1)[0]
+    return None
+
+
+def _hash_hex(hash_value: str, hash_algo: str | None = None) -> str:
+    """Return the raw hash value, stripping any algorithm prefix.
+
+    Nix represents SRI hashes as ``<algo>-<base64>`` and flat hashes as a
+    plain hex string. Software Heritage expects the raw hash without the
+    algorithm prefix.
+
+    Some Nix implementations (e.g. Determinate Nix) emit flat hashes as
+    base64 even though the algorithm is not SRI-prefixed. SWH's content
+    lookup endpoint requires hex for ``sha256`` flat hashes, so base64
+    values are decoded and re-encoded as hex.
+    """
+    raw = hash_value.split("-", 1)[1] if hash_value and "-" in hash_value else hash_value
+    if (
+        raw
+        and hash_algo in {"sha256", "sha512"}
+        and len(raw) == _base64_length_for_hash_algo(hash_algo)
+        and _looks_like_base64(raw)
+    ):
+        import binascii
+
+        return binascii.hexlify(binascii.a2b_base64(raw)).decode("ascii")
+    return raw
+
+
+def _base64_length_for_hash_algo(hash_algo: str) -> int:
+    """Return the length in characters of a base64-encoded hash for ``hash_algo``."""
+    byte_lengths = {"sha256": 32, "sha512": 64}
+    # Base64 encoding produces 4 characters for every 3 bytes, rounded up.
+    byte_len = byte_lengths.get(hash_algo, 0)
+    return (byte_len + 2) // 3 * 4 if byte_len else 0
+
+
+def _looks_like_base64(value: str) -> bool:
+    """Return True when ``value`` looks like a base64-encoded string."""
+    if not value:
+        return False
+    import base64
+
+    try:
+        return base64.b64encode(base64.b64decode(value, validate=True)) == value.encode()
+    except Exception:
+        return False
 
 
 def _extract_origin_urls(env: dict) -> list[str]:

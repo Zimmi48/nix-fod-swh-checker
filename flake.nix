@@ -45,6 +45,19 @@
         # integration job can use a reproducible, pinned installable.
         packages.hello = nixpkgs.legacyPackages.${system}.hello;
 
+        # Fixed-output derivations used to test parser normalization across
+        # Nix implementations.  These derivations are never built; they only
+        # need to evaluate successfully.
+        legacyPackages.fod-fixtures =
+          let
+            fixtures = import ./tests/fixtures/fods.nix { inherit system; };
+          in
+          {
+            flat-hex = fixtures.flat-hex;
+            flat-sri = fixtures.flat-sri;
+            nar-recursive = fixtures.nar-recursive;
+          };
+
         checks.default = nix-fod-swh-checker;
 
         apps.default = {

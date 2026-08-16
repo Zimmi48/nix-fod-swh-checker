@@ -782,6 +782,8 @@ def test_request_archiving_dry_run_lists_unknown_origins(capsys, tmp_path):
     )
     fod_known = _fod("known")
     fod_known.origin_urls = ["https://example.com/known.tar.gz"]
+    fod_undetermined = _fod("undetermined")
+    fod_undetermined.origin_urls = ["https://example.com/undetermined.tar.gz"]
 
     checkpoint = tmp_path / "ckpt.json"
     from nix_fod_swh_checker.checkpoint import save_checkpoint
@@ -811,6 +813,13 @@ def test_request_archiving_dry_run_lists_unknown_origins(capsys, tmp_path):
                 detail="known",
                 origin_urls=fod_known.origin_urls,
             ),
+            fod_undetermined.label: SWHCheckResult(
+                fod=fod_undetermined,
+                known=None,
+                method=SWHLookupMethod.UNDETERMINED,
+                detail="could not determine",
+                origin_urls=fod_undetermined.origin_urls,
+            ),
         },
     )
 
@@ -828,6 +837,7 @@ def test_request_archiving_dry_run_lists_unknown_origins(capsys, tmp_path):
     assert "https://example.com/archive.tar.gz (tarball)" in out
     assert "https://example.com/repo.git (git)" in out
     assert "https://example.com/known.tar.gz" not in out
+    assert "https://example.com/undetermined.tar.gz" not in out
 
 
 def test_request_archiving_submits_requests_for_unknown_origins(monkeypatch, capsys, tmp_path):
@@ -970,6 +980,77 @@ def test_request_archiving_warns_when_no_origin_urls(capsys, tmp_path):
     assert exit_code == 0
     assert "warning: skipping" in err
     assert "no origin URLs" in err
+
+
+def test_request_archiving_skips_undetermined_results(monkeypatch, capsys, tmp_path):
+    fod_unknown = _fod("unknown")
+    fod_unknown.origin_urls = ["https://example.com/archive.tar.gz"]
+    fod_undetermined = _fod("undetermined")
+    fod_undetermined.origin_urls = ["https://example.com/undetermined.tar.gz"]
+    checkpoint = tmp_path / "ckpt.json"
+    from nix_fod_swh_checker.checkpoint import save_checkpoint
+
+    save_checkpoint(
+        checkpoint,
+        "nixpkgs#hello",
+        {
+            fod_unknown.label: SWHCheckResult(
+                fod=fod_unknown,
+                known=False,
+                method=SWHLookupMethod.CONTENT_HASH,
+                detail="not known",
+                origin_urls=fod_unknown.origin_urls,
+            ),
+            fod_undetermined.label: SWHCheckResult(
+                fod=fod_undetermined,
+                known=None,
+                method=SWHLookupMethod.UNDETERMINED,
+                detail="could not determine",
+                origin_urls=fod_undetermined.origin_urls,
+            ),
+        },
+    )
+
+    requested = []
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+        def request_origin_save(self, origin_url, *, visit_type="tarball"):
+            requested.append(origin_url)
+            return type(
+                "SaveRequest",
+                (),
+                {
+                    "id": 1,
+                    "origin_url": origin_url,
+                    "visit_type": visit_type,
+                    "save_request_status": "accepted",
+                    "save_task_status": "pending",
+                },
+            )()
+
+    monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: FakeClient())
+    monkeypatch.setattr(cli, "_first_live_url", lambda urls, **kwargs: urls[0])
+
+    exit_code = cli.main(
+        [
+            "request-archiving",
+            "nixpkgs#hello",
+            "--checkpoint-file",
+            str(checkpoint),
+            "--quiet",
+        ]
+    )
+
+    err = capsys.readouterr().err
+    assert exit_code == 0
+    assert requested == ["https://example.com/archive.tar.gz"]
+    assert "https://example.com/undetermined.tar.gz" not in err
 
 
 def test_request_archiving_warns_when_all_urls_unreachable(monkeypatch, capsys, tmp_path):
