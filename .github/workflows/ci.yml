@@ -112,7 +112,33 @@ jobs:
         run: |
           nix run .#nix-fod-swh-check -- cook-swh-fods swh-backed-fods.nix
 
+      - name: Upload SWH-backed FODs expression
+        uses: actions/upload-artifact@v4
+        with:
+          name: swh-backed-fods
+          path: swh-backed-fods.nix
+
+  build-swh-fods:
+    runs-on: ubuntu-latest
+    needs: integration
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v13
+        with:
+          extra-conf: |
+            accept-flake-config = true
+
+      - name: Download SWH-backed FODs expression
+        uses: actions/download-artifact@v4
+        with:
+          name: swh-backed-fods
+
       - name: Build SWH-backed FODs (expected to fail if not cooked)
+        env:
+          SWH_API_TOKEN: ${{ secrets.SWH_API_TOKEN }}
         run: |
           set +e
           output=$(nix run .#nix-fod-swh-check -- build-swh-fods swh-backed-fods.nix \
