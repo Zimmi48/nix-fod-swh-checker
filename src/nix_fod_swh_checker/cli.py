@@ -111,6 +111,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     generate_parser.add_argument(
         "installable",
+        nargs="?",
+        default=None,
         help="the Nix installable that was previously checked",
     )
     generate_parser.add_argument(
@@ -184,8 +186,8 @@ def _build_parser() -> argparse.ArgumentParser:
     build_parser.add_argument(
         "-o",
         "--output",
-        default="swh-backed-fods.nix",
-        help="path to write the generated Nix expression (default: %(default)s)",
+        default=None,
+        help="path to write the generated Nix expression when <input> is an installable (default: swh-backed-fods.nix)",
     )
     build_parser.add_argument(
         "--checkpoint-file",
@@ -295,6 +297,75 @@ def _build_parser() -> argparse.ArgumentParser:
         help="do not read or write a checkpoint file",
     )
     return parser
+
+
+def _exit_usage(parser: argparse.ArgumentParser, message: str) -> None:
+    """Print a usage error and exit with code 2."""
+    parser.print_usage(sys.stderr)
+    print(f"{parser.prog}: error: {message}", file=sys.stderr)
+    sys.exit(2)
+
+
+def _validate_args(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> argparse.Namespace:
+    """Reject incompatible command-line argument combinations.
+
+    Some options are mutually exclusive or meaningless in combination; this
+    function turns the silent misbehaviour described in issue #28 into clear
+    error messages.
+    """
+    if args.command == "check":
+        if args.no_checkpoint and args.checkpoint_file:
+            _exit_usage(
+                parser,
+                "--no-checkpoint and --checkpoint-file are mutually exclusive",
+            )
+        if args.no_checkpoint:
+            retry_flags = [
+                flag
+                for given, flag in (
+                    (args.retry_unknown, "--retry-unknown"),
+                    (args.retry_undetermined, "--retry-undetermined"),
+                )
+                if given
+            ]
+            if retry_flags:
+                joined = " and ".join(retry_flags)
+                _exit_usage(parser, f"{joined} require a checkpoint")
+
+    if args.command in ("request-archiving", "generate-swh-fods"):
+        if args.json_input and args.checkpoint_file:
+            _exit_usage(
+                parser,
+                "--json-input and --checkpoint-file are mutually exclusive",
+            )
+        if args.json_input and args.installable:
+            _exit_usage(
+                parser,
+                "<installable> cannot be combined with -i/--json-input",
+            )
+        if args.command == "generate-swh-fods" and not args.json_input and not args.installable:
+            _exit_usage(
+                parser,
+                "either an installable or -i/--json-input is required",
+            )
+
+    if args.command in ("cook-swh-fods", "build-swh-fods"):
+        if _is_nix_file(args.input) and args.checkpoint_file:
+            _exit_usage(
+                parser,
+                "--checkpoint-file cannot be used when <input> is a .nix file",
+            )
+
+    if args.command == "build-swh-fods":
+        if _is_nix_file(args.input) and args.output:
+            _exit_usage(
+                parser,
+                "-o/--output cannot be used when <input> is a .nix file",
+            )
+
+    return args
 
 
 def _result_to_dict(result: SWHCheckResult) -> dict:
@@ -841,7 +912,8 @@ def _run_build_swh_fods_command(args: argparse.Namespace) -> int:
         results = _load_results_for_build(args)
         if results is None:
             return 1
-        expressions = write_swh_fods_nix(args.output, results)
+        output_path = args.output or "swh-backed-fods.nix"
+        expressions = write_swh_fods_nix(output_path, results)
 
         if not expressions:
             print(
@@ -849,7 +921,7 @@ def _run_build_swh_fods_command(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 0
-        nix_file = args.output
+        nix_file = output_path
 
     on_log = None if args.quiet else _log_to_stderr
 
@@ -961,7 +1033,7 @@ def _run_build_swh_fods_command(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
-    args = parser.parse_args(argv)
+    args = _validate_args(parser.parse_args(argv), parser)
 
     if args.command == "request-archiving":
         return _run_request_archiving_command(args)

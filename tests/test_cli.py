@@ -1417,7 +1417,7 @@ def test_generate_swh_fods_round_trips_json_input_with_label(monkeypatch, tmp_pa
 
     output = tmp_path / "swh-backed-fods.nix"
     exit_code = cli.main(
-        ["generate-swh-fods", "nixpkgs#hello", "-i", str(results_json), "-o", str(output)]
+        ["generate-swh-fods", "-i", str(results_json), "-o", str(output)]
     )
 
     assert exit_code == 0
@@ -1682,3 +1682,97 @@ def test_build_swh_fods_all_outputs_already_present(monkeypatch, capsys, tmp_pat
     assert exit_code == 0
     assert "already in the Nix store" in err
     assert built == []
+
+
+def test_check_no_checkpoint_and_checkpoint_file_are_incompatible(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["check", "nixpkgs#hello", "--no-checkpoint", "--checkpoint-file", "/tmp/x.json"])
+    assert exc_info.value.code == 2
+    assert "mutually exclusive" in capsys.readouterr().err
+
+
+def test_check_retry_unknown_requires_checkpoint(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["check", "nixpkgs#hello", "--retry-unknown", "--no-checkpoint"])
+    assert exc_info.value.code == 2
+    assert "require a checkpoint" in capsys.readouterr().err
+
+
+def test_check_retry_undetermined_requires_checkpoint(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["check", "nixpkgs#hello", "--retry-undetermined", "--no-checkpoint"])
+    assert exc_info.value.code == 2
+    assert "require a checkpoint" in capsys.readouterr().err
+
+
+def test_check_retry_both_requires_checkpoint(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(
+            [
+                "check",
+                "nixpkgs#hello",
+                "--retry-unknown",
+                "--retry-undetermined",
+                "--no-checkpoint",
+            ]
+        )
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    assert "require a checkpoint" in err
+    assert "--retry-unknown" in err
+    assert "--retry-undetermined" in err
+
+
+def test_request_archiving_json_input_and_checkpoint_file_incompatible(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["request-archiving", "-i", "/tmp/x.json", "--checkpoint-file", "/tmp/y.json"])
+    assert exc_info.value.code == 2
+    assert "mutually exclusive" in capsys.readouterr().err
+
+
+def test_request_archiving_installable_and_json_input_incompatible(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["request-archiving", "nixpkgs#hello", "-i", "/tmp/x.json"])
+    assert exc_info.value.code == 2
+    assert "cannot be combined with -i/--json-input" in capsys.readouterr().err
+
+
+def test_generate_swh_fods_json_input_and_checkpoint_file_incompatible(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["generate-swh-fods", "nixpkgs#hello", "-i", "/tmp/x.json", "--checkpoint-file", "/tmp/y.json"])
+    assert exc_info.value.code == 2
+    assert "mutually exclusive" in capsys.readouterr().err
+
+
+def test_generate_swh_fods_installable_and_json_input_incompatible(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["generate-swh-fods", "nixpkgs#hello", "-i", "/tmp/x.json"])
+    assert exc_info.value.code == 2
+    assert "cannot be combined with -i/--json-input" in capsys.readouterr().err
+
+
+def test_cook_swh_fods_checkpoint_file_incompatible_with_nix_file(capsys, tmp_path):
+    nix_file = tmp_path / "swh-backed-fods.nix"
+    nix_file.write_text('{ pkgs ? {} }: {}\n')
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["cook-swh-fods", str(nix_file), "--checkpoint-file", str(tmp_path / "x.json")])
+    assert exc_info.value.code == 2
+    assert "cannot be used when <input> is a .nix file" in capsys.readouterr().err
+
+
+def test_build_swh_fods_checkpoint_file_incompatible_with_nix_file(capsys, tmp_path):
+    nix_file = tmp_path / "swh-backed-fods.nix"
+    nix_file.write_text('{ pkgs ? {} }: {}\n')
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["build-swh-fods", str(nix_file), "--checkpoint-file", str(tmp_path / "x.json")])
+    assert exc_info.value.code == 2
+    assert "cannot be used when <input> is a .nix file" in capsys.readouterr().err
+
+
+def test_build_swh_fods_output_incompatible_with_nix_file(capsys, tmp_path):
+    nix_file = tmp_path / "swh-backed-fods.nix"
+    nix_file.write_text('{ pkgs ? {} }: {}\n')
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["build-swh-fods", str(nix_file), "-o", str(tmp_path / "out.nix")])
+    assert exc_info.value.code == 2
+    assert "-o/--output cannot be used when <input> is a .nix file" in capsys.readouterr().err

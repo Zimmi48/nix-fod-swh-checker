@@ -63,9 +63,14 @@ If the checkpoint already contains results for some FODs, those FODs are skipped
 | `--no-checkpoint` | false | Do not read or write a checkpoint file. |
 | `--swh-api-url` `<url>` | `https://archive.softwareheritage.org/api/1` | Base URL of the Software Heritage API. |
 | `--swh-api-token` `<token>` | value of `SWH_API_TOKEN` | Bearer token for authenticated Software Heritage API requests. |
-| `--min-delay` `<seconds>` | `1.0` | Minimum delay between anonymous Software Heritage API requests. Ignored when authenticated. |
+| `--min-delay` `<seconds>` | `1.0` | Minimum delay between anonymous Software Heritage API requests. No delay is inserted when authenticated. |
 | `--swh-identify-timeout` `<seconds>` | `30.0` | Timeout for the `swh identify` command when realising a FOD. |
 | `--disarchive-timeout` `<seconds>` | `30.0` | Timeout for the `disarchive disassemble` command when capturing an archive specification. |
+
+Incompatible option combinations are rejected with exit code `2`:
+
+- `--no-checkpoint` cannot be combined with `--checkpoint-file`.
+- `--retry-unknown` and `--retry-undetermined` require a checkpoint, so they cannot be combined with `--no-checkpoint`.
 
 #### `check` human-readable report
 
@@ -117,7 +122,7 @@ The `fod` field is a [FOD object](#fod-object).
 |------|---------|
 | `0` | Success. |
 | `1` | A `nix` command failed, a Software Heritage API error occurred, or another recoverable error was reported. |
-| `2` | Argument parsing failed (e.g. missing subcommand). |
+| `2` | Argument parsing failed (e.g. missing subcommand) or incompatible options were given. |
 | `130` | The user interrupted the command with Ctrl+C. A checkpoint is saved unless `--no-checkpoint` was used. |
 
 Unhandled exceptions propagate and produce a Python traceback.
@@ -135,7 +140,7 @@ Request the archiving of upstream origins for FODs that were not found on Softwa
 The command reads results from either:
 
 - the checkpoint file for `<installable>` (default), or
-- the JSON file given with `-i`/`--json-input`.
+- the JSON file given with `-i`/`--json-input` (no installable allowed).
 
 For every result whose `known` field is not `true` and which declares at least one [origin URL](#origin-urls), the command tries to pick a single reachable origin URL and sends a save request to Software Heritage. Each URL is probed with a `HEAD` request in order, and the first one that responds successfully is kept. If none of the URLs respond, the FOD is skipped with a warning.
 
@@ -154,12 +159,14 @@ FODs that are skipped are reported with a warning on stderr: either because they
 | Option | Default | Description |
 |--------|---------|-------------|
 | `-i`, `--json-input` `<path>` | none | Read results from a JSON file produced by `check -o`. |
-| `--checkpoint-file` `<path>` | per-installable cache file | Checkpoint to read results from. Ignored when `-i` is used. |
+| `--checkpoint-file` `<path>` | per-installable cache file | Checkpoint to read results from. |
 | `--dry-run` | false | List origins that would be requested without making API calls. |
 | `--swh-api-url` `<url>` | `https://archive.softwareheritage.org/api/1` | Base URL of the Software Heritage API. |
 | `--swh-api-token` `<token>` | value of `SWH_API_TOKEN` | Bearer token for authenticated requests. |
 | `--min-delay` `<seconds>` | `1.0` | Minimum delay between anonymous API requests. |
 | `-q`, `--quiet` | false | Suppress stderr progress messages. |
+
+`-i`/`--json-input` is mutually exclusive with `<installable>` and `--checkpoint-file`. Provide either an installable (optionally with `--checkpoint-file`) or `-i`/`--json-input`.
 
 #### `request-archiving` exit codes
 
@@ -167,14 +174,14 @@ FODs that are skipped are reported with a warning on stderr: either because they
 |------|---------|
 | `0` | Success, or no origins needed archiving. |
 | `1` | A Software Heritage API error occurred, or the checkpoint/JSON input could not be read. |
-| `2` | Neither an installable nor `-i`/`--json-input` was provided. |
+| `2` | Neither an installable nor `-i`/`--json-input` was provided, or incompatible options were given. |
 
 ---
 
 ### `generate-swh-fods`
 
 ```
-nix-fod-swh-check generate-swh-fods [options] <installable>
+nix-fod-swh-check generate-swh-fods [options] [<installable>]
 ```
 
 Generate a Nix expression containing SWH-backed fixed-output derivations from previously checked results.
@@ -182,7 +189,7 @@ Generate a Nix expression containing SWH-backed fixed-output derivations from pr
 The command reads results from either:
 
 - the checkpoint file for `<installable>` (default), or
-- the JSON file given with `-i`/`--json-input`.
+- the JSON file given with `-i`/`--json-input` (no installable allowed).
 
 For every result whose `known` field is `true`, it attempts to produce a Nix expression that downloads the same content from Software Heritage.
 If a known result cannot be turned into an expression (for example, because its content-addressing method cannot be mapped to a Nix `outputHashMode`, or a disarchive result is missing required metadata), a warning is printed to stderr and the result is skipped.
@@ -194,9 +201,12 @@ The generated file evaluates to a function `{ pkgs ? <pinned-nixpkgs> }: { ... }
 | Option | Default | Description |
 |--------|---------|-------------|
 | `-o`, `--output` `<path>` | `swh-backed-fods.nix` | Path to write the generated Nix expression. Overwritten if it exists. |
-| `--checkpoint-file` `<path>` | per-installable cache file | Checkpoint to read results from. Ignored when `-i` is used. |
+| `--checkpoint-file` `<path>` | per-installable cache file | Checkpoint to read results from. |
 | `-i`, `--json-input` `<path>` | none | Read results from a JSON file produced by `check -o`. |
 | `-q`, `--quiet` | false | Suppress stderr progress messages. Warnings and errors are still printed. |
+
+`-i`/`--json-input` is mutually exclusive with `<installable>` and `--checkpoint-file`. Provide either an installable (optionally with `--checkpoint-file`) or `-i`/`--json-input`.
+
 
 #### `generate-swh-fods` exit codes
 
@@ -204,6 +214,7 @@ The generated file evaluates to a function `{ pkgs ? <pinned-nixpkgs> }: { ... }
 |------|---------|
 | `0` | Success. The file is written even if it contains zero expressions. |
 | `1` | The checkpoint or JSON input could not be read, or contained no results. Known results that cannot be turned into expressions are skipped with a warning but do not cause exit code `1`. |
+| `2` | Neither an installable nor `-i`/`--json-input` was provided, or incompatible options were given. |
 
 ---
 
@@ -228,7 +239,7 @@ When not `--quiet`, the command prints each SWHID along with the status of its c
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--checkpoint-file` `<path>` | per-installable cache file | Checkpoint to read results from when `<input>` is an installable. |
+| `--checkpoint-file` `<path>` | per-installable cache file | Checkpoint to read results from when `<input>` is an installable. Not compatible with providing a `.nix` file as `<input>`. |
 | `--swh-api-url` `<url>` | `https://archive.softwareheritage.org/api/1` | Base URL of the Software Heritage API. |
 | `--swh-api-token` `<token>` | value of `SWH_API_TOKEN` | Bearer token for authenticated requests. |
 | `--min-delay` `<seconds>` | `1.0` | Minimum delay between anonymous API requests. |
@@ -240,6 +251,7 @@ When not `--quiet`, the command prints each SWHID along with the status of its c
 |------|---------|
 | `0` | Success, or no vault flat archives need cooking. |
 | `1` | A Software Heritage API error occurred, or the checkpoint could not be read. |
+| `2` | Incompatible options were given. |
 
 ---
 
@@ -256,7 +268,7 @@ Generate a Nix expression with SWH-backed FODs and build the missing ones with `
 - a Nix installable previously checked (results are read from the checkpoint), or
 - a path to an already-generated `swh-backed-fods.nix` file.
 
-When `<input>` is an installable, the command first generates the expression and writes it to the path given by `-o`/`--output` (default `swh-backed-fods.nix`). When `<input>` is a `.nix` file, that file is used directly and `-o`/`--output` is ignored.
+When `<input>` is an installable, the command first generates the expression and writes it to the path given by `-o`/`--output` (default `swh-backed-fods.nix`). When `<input>` is a `.nix` file, that file is used directly; `-o`/`--output` cannot be used in that case.
 
 The command then:
 
@@ -272,8 +284,8 @@ If all outputs are already in the store, the command reports this and exits `0` 
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `-o`, `--output` `<path>` | `swh-backed-fods.nix` | Path to write the generated expression when `<input>` is an installable. Ignored when `<input>` is a `.nix` file. |
-| `--checkpoint-file` `<path>` | per-installable cache file | Checkpoint to read results from when `<input>` is an installable. |
+| `-o`, `--output` `<path>` | `swh-backed-fods.nix` | Path to write the generated expression when `<input>` is an installable. Not compatible with providing a `.nix` file as `<input>`. |
+| `--checkpoint-file` `<path>` | per-installable cache file | Checkpoint to read results from when `<input>` is an installable. Not compatible with providing a `.nix` file as `<input>`. |
 | `--nix-build-arg` `<arg>` | none | Extra argument to pass to `nix build`. May be given multiple times. |
 | `--no-substitute` | false | Do not use substituters when building. Passed to both the dry run and the real build. This means that all the missing outputs must be built from the Software Heritage source rather than fetched from a Nix cache. |
 | `--swh-api-url` `<url>` | `https://archive.softwareheritage.org/api/1` | Base URL of the Software Heritage API. |
@@ -287,6 +299,7 @@ If all outputs are already in the store, the command reports this and exits `0` 
 |------|---------|
 | `0` | Success, or all outputs were already in the store, or there were no SWH-backed FODs to build. |
 | `1` | A `nix` command failed, a vault flat archive is not cooked, a Software Heritage API error occurred, or the checkpoint could not be read. |
+| `2` | Incompatible options were given. |
 
 ---
 
@@ -354,7 +367,7 @@ Both the `check` JSON output and checkpoint files describe each checked FOD with
 | `label` | string | Computed label `<drv-path>` or `<drv-path>^<output-name>` for non-`out` outputs. |
 | `origin_urls` | list of strings | Upstream origin URLs extracted from the derivation environment. Empty when no URLs are declared. |
 
-`label` is a computed property. In the `check` JSON output it is included as a field of the `fod` object for convenience. In checkpoint files it is the key of the `results` object, so it is not repeated inside the `fod` object. It is ignored when JSON output is read back by `generate-swh-fods -i`.
+`label` is a computed property. In the `check` JSON output it is included as a field of the `fod` object for convenience. In checkpoint files it is the key of the `results` object, so it is not repeated inside the `fod` object. When JSON output is read back by `generate-swh-fods -i`, the label is recomputed from the other fields and any redundant `label` field is ignored.
 
 ---
 
