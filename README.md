@@ -13,7 +13,7 @@ The tool runs `nix derivation show --recursive <installable>` to discover every 
 - **`git`** hashes are compared as git object IDs via SWHID batch lookup.
 - **`flat`** hashes are compared as raw content checksums via the SWH `/content/` endpoint.
 - **`nar`** and other methods have no direct SWH equivalent, so the FOD is realised, its actual SWHID is computed with `swh identify`, and that SWHID is looked up.
-- For archives that are not themselves archived but whose unpacked contents are, the tool uses GNU Guix `disarchive` to capture the archive metadata and reports the result as **known after disarchive**.
+- For archives that are not themselves archived but whose unpacked contents are, the tool first queries the GNU Guix `disarchive` database by the FOD's hash, and falls back to locally capturing the archive metadata with `disarchive` if needed. It reports the result as **known after disarchive**.
 
 No heuristics or guessing are involved: every result is either a direct hash comparison or based on the actual archived content's own computed identifier.
 
