@@ -44,7 +44,7 @@ The command performs the following steps:
 2. Walk the returned derivation graph and collect every output that has a fixed hash.
 3. For each FOD, extract any upstream origin URLs from the derivation environment (see [Origin URLs](#origin-urls)).
 4. Choose a comparison strategy based on its `method` and hash algorithm (see [internals.md](internals.md#comparison-strategies)).
-5. Query the Software Heritage API.
+5. Query the Software Heritage API. For archives that are not directly known, the GNU Guix disarchive database may be queried first as a fast cache (see [internals.md](internals.md#try_disarchive)).
 6. Save each result to a checkpoint file as it is computed, unless `--no-checkpoint` is given.
 7. Print a human-readable report. If `-o`/`--output` is given, also write JSON results to the given path.
 
