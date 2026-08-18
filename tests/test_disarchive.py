@@ -249,17 +249,19 @@ def test_try_disarchive_database_unknown_swhid_falls_back(monkeypatch, tmp_path)
         disarchive_module.requests, "get", lambda url, timeout=None: FakeResponse()
     )
 
-    monkeypatch.setattr(
-        disarchive_module,
-        "_try_disarchive_local",
-        lambda fod, client, **kwargs: SWHCheckResult(
+    fallback_called = []
+
+    def fake_local(fod, client, **kwargs):
+        fallback_called.append(True)
+        return SWHCheckResult(
             fod=fod,
             known=False,
             method=SWHLookupMethod.KNOWN_AFTER_DISARCHIVE,
             detail="local fallback",
             swhid=KNOWN_DIRECTORY_SWHID,
-        ),
-    )
+        )
+
+    monkeypatch.setattr(disarchive_module, "_try_disarchive_local", fake_local)
 
     client = FakeSWHClient()
     result = try_disarchive(make_fod(), client)
@@ -267,6 +269,7 @@ def test_try_disarchive_database_unknown_swhid_falls_back(monkeypatch, tmp_path)
     assert result.known is False
     assert result.method == SWHLookupMethod.KNOWN_AFTER_DISARCHIVE
     assert result.swhid == KNOWN_DIRECTORY_SWHID
+    assert fallback_called
 
 
 def test_try_disarchive_database_missing_entry_falls_back(monkeypatch, tmp_path):

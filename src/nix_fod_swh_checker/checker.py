@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from .disarchive import try_disarchive
+from .disarchive import _DISARCHIVE_DB_URL, try_disarchive
 from .models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
 from .nix import NixCommandError, realise_fod
 from .swh import CONTENT_LOOKUP_ALGOS, SWHClient
@@ -41,7 +41,7 @@ def check_fod(
     swh_binary: str = "swh",
     swh_identify_timeout: float = 30.0,
     disarchive_timeout: float = 30.0,
-    disarchive_db_url: str = "https://disarchive.guix.gnu.org",
+    disarchive_db_url: str = _DISARCHIVE_DB_URL,
     disarchive_db_timeout: float = 20.0,
     on_log: Callable[[str], None] | None = None,
 ) -> SWHCheckResult:
@@ -102,7 +102,7 @@ def _check_via_content_hash(
     swh_binary: str = "swh",
     swh_identify_timeout: float = 30.0,
     disarchive_timeout: float = 30.0,
-    disarchive_db_url: str = "https://disarchive.guix.gnu.org",
+    disarchive_db_url: str = _DISARCHIVE_DB_URL,
     disarchive_db_timeout: float = 20.0,
     on_log: Callable[[str], None] | None = None,
 ) -> SWHCheckResult:
@@ -162,7 +162,7 @@ def _check_via_swhid(
     swh_binary: str = "swh",
     swh_identify_timeout: float = 30.0,
     disarchive_timeout: float = 30.0,
-    disarchive_db_url: str = "https://disarchive.guix.gnu.org",
+    disarchive_db_url: str = _DISARCHIVE_DB_URL,
     disarchive_db_timeout: float = 20.0,
     on_log: Callable[[str], None] | None = None,
 ) -> SWHCheckResult:
