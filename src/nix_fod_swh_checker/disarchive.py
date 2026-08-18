@@ -1,15 +1,15 @@
-"""Decompress a realised FOD output and check its directory SWHID.
+"""Look up and decompress archive metadata for FODs.
 
 When a FOD output is a single file (``method="flat"`` or ``method="git"`` as
 a blob) that is not known to Software Heritage as a content object, it may
 still be an archive whose *contents* are archived as a directory. This module
-realises such FODs, unpacks the resulting archive with standard tools, and
-looks up the ``swh:1:dir:`` identifier of the unpacked tree.
+first tries the GNU Guix disarchive database as a fast cache; if that fails,
+it realises the FOD, unpacks the archive with standard tools, and captures a
+fresh ``disarchive`` specification.
 
-It also uses GNU Guix ``disarchive`` to capture the archive's metadata
-specification. ``disarchive`` computes its own directory SWHID, which may
-include a single top-level directory that Nix normally strips. We therefore
-keep track of two SWHIDs:
+``disarchive`` computes its own directory SWHID, which may include a single
+top-level directory that Nix normally strips. We therefore keep track of two
+SWHIDs:
 
 - the *stripped* SWHID, computed from the tree after applying Nix's
   ``stripHash`` semantics; and
@@ -32,12 +32,15 @@ import zipfile
 from pathlib import Path
 from typing import Callable
 
+import requests
+
 from .models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
 from .nix import NixCommandError, realise_fod
 from .swh import SWHClient
 from .swhid import SWHIdentifyError, compute_swhid
 
 _ARCHIVE_URL = "https://archive.softwareheritage.org"
+_DISARCHIVE_DB_URL = "https://disarchive.guix.gnu.org"
 
 
 class DisarchiveError(RuntimeError):
@@ -46,6 +49,10 @@ class DisarchiveError(RuntimeError):
 
 class DisarchiveTimeoutError(DisarchiveError):
     """Raised when ``disarchive disassemble`` exceeds its timeout."""
+
+
+class DisarchiveDatabaseError(DisarchiveError):
+    """Raised when the disarchive database cannot be queried."""
 
 
 def try_disarchive(
@@ -57,9 +64,139 @@ def try_disarchive(
     disarchive_binary: str = "disarchive",
     swh_identify_timeout: float = 30.0,
     disarchive_timeout: float = 30.0,
+    disarchive_db_url: str = _DISARCHIVE_DB_URL,
+    disarchive_db_timeout: float = 20.0,
     on_log: Callable[[str], None] | None = None,
 ) -> SWHCheckResult | None:
-    """Realise a FOD, try to unpack it, and check its directory SWHID.
+    """Check a FOD's archive contents, using the disarchive database as a cache.
+
+    Returns a :class:`SWHCheckResult` when the archive contents were looked up
+    successfully, or ``None`` when the FOD could not be realised, is not an
+    archive, or could not be unpacked.
+
+    First, the GNU Guix disarchive database is queried by the FOD's hash. If
+    it returns a specification, the embedded directory SWHID is checked against
+    Software Heritage. When that SWHID is known, the result is reported
+    immediately without realising the FOD or invoking the local ``disarchive``
+    tool.
+
+    If the database has no entry, the embedded SWHID is unknown, or the
+    database request fails, the function falls back to realising the FOD,
+    unpacking the archive, and running ``disarchive disassemble`` locally.
+    """
+    db_result = _try_disarchive_database(
+        fod,
+        client,
+        db_url=disarchive_db_url,
+        timeout=disarchive_db_timeout,
+        on_log=on_log,
+    )
+    if db_result is not None:
+        return db_result
+
+    return _try_disarchive_local(
+        fod,
+        client,
+        nix_binary=nix_binary,
+        swh_binary=swh_binary,
+        disarchive_binary=disarchive_binary,
+        swh_identify_timeout=swh_identify_timeout,
+        disarchive_timeout=disarchive_timeout,
+        on_log=on_log,
+    )
+
+
+def _try_disarchive_database(
+    fod: FixedOutputDerivation,
+    client: SWHClient,
+    *,
+    db_url: str = _DISARCHIVE_DB_URL,
+    timeout: float = 20.0,
+    on_log: Callable[[str], None] | None = None,
+) -> SWHCheckResult | None:
+    """Query the disarchive database by FOD hash and return a result if known.
+
+    Returns ``None`` when the FOD hash cannot be used to query the database,
+    the database has no entry, the embedded SWHID is unknown, or the lookup
+    fails. In all of those cases the caller should fall back to the local
+    realise/unpack/disassemble path.
+    """
+    if not fod.hash_algo or not fod.hash_hex:
+        return None
+
+    url = f"{db_url}/{fod.hash_algo}/{fod.hash_hex}"
+    if on_log:
+        on_log(f"{fod.label}: checking disarchive database at {url}...")
+
+    try:
+        response = requests.get(url, timeout=timeout)
+    except requests.RequestException as exc:
+        if on_log:
+            on_log(f"{fod.label}: disarchive database lookup failed: {exc}")
+        return None
+
+    if response.status_code == 404:
+        if on_log:
+            on_log(f"{fod.label}: not found in disarchive database")
+        return None
+    if response.status_code != 200:
+        if on_log:
+            on_log(
+                f"{fod.label}: unexpected disarchive database status "
+                f"{response.status_code}"
+            )
+        return None
+
+    spec = response.text
+    disarchive_swhid = _extract_disarchive_swhid(spec)
+    if not disarchive_swhid:
+        if on_log:
+            on_log(f"{fod.label}: disarchive database spec contains no directory SWHID")
+        return None
+
+    disarchive_known = (
+        client.lookup_known_swhids([disarchive_swhid]).get(disarchive_swhid, False)
+    )
+    if not disarchive_known:
+        if on_log:
+            on_log(
+                f"{fod.label}: disarchive database returned {disarchive_swhid}, "
+                f"but it is not known to Software Heritage"
+            )
+        return None
+
+    top_dir = _extract_disarchive_top_dir(spec)
+
+    if on_log:
+        on_log(
+            f"{fod.label}: disarchive database returned known {disarchive_swhid}"
+        )
+
+    return SWHCheckResult(
+        fod=fod,
+        known=True,
+        method=SWHLookupMethod.KNOWN_AFTER_DISARCHIVE,
+        detail=f"disarchive database returned {disarchive_swhid}",
+        swhid=disarchive_swhid,
+        swh_url=f"{_ARCHIVE_URL}/{disarchive_swhid}",
+        disarchive_spec=spec,
+        disarchive_swhid=disarchive_swhid,
+        disarchive_top_dir=top_dir,
+    )
+
+
+def _try_disarchive_local(
+    fod: FixedOutputDerivation,
+    client: SWHClient,
+    *,
+    nix_binary: str = "nix",
+    swh_binary: str = "swh",
+    disarchive_binary: str = "disarchive",
+    swh_identify_timeout: float = 30.0,
+    disarchive_timeout: float = 30.0,
+    on_log: Callable[[str], None] | None = None,
+) -> SWHCheckResult | None:
+    """Realise a FOD, try to unpack it, and check its directory SWHID locally.
 
     Returns a :class:`SWHCheckResult` when the archive was successfully
     unpacked and its directory SWHID looked up, or ``None`` when the FOD could
@@ -196,6 +333,18 @@ def _extract_disarchive_swhid(spec: str) -> str | None:
     addresses; we extract the SWHID address if present.
     """
     match = re.search(r'\(swhid\s+"(swh:1:dir:[a-f0-9]+)"\)', spec)
+    return match.group(1) if match else None
+
+
+def _extract_disarchive_top_dir(spec: str) -> str | None:
+    """Return the name of the single top-level directory in a disarchive spec.
+
+    The ``directory-ref`` form includes a ``name`` field that corresponds to
+    the top-level directory Nix normally strips. We extract it so that, when
+    only the stripped SWHID is known, the generated expression can re-wrap the
+    directory before calling ``disarchive assemble``.
+    """
+    match = re.search(r'\(directory-ref\s+\(version\s+\d+\)\s+\(name\s+"([^"]+)"\)', spec)
     return match.group(1) if match else None
 
 
