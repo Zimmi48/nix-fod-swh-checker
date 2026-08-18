@@ -113,7 +113,7 @@ When `-o`/`--output` is given, the file contains a JSON array of result objects.
 | `swh_url` | string or `null` | URL of the object on `https://archive.softwareheritage.org`, if known. |
 | `disarchive_spec` | string or `null` | The GNU Guix `disarchive` specification, if captured. |
 | `disarchive_swhid` | string or `null` | The SWHID embedded in the disarchive specification, if any. |
-| `disarchive_top_dir` | string or `null` | The name of the single top-level directory that was stripped before computing the stripped SWHID, if any. |
+| `disarchive_top_dir` | string or `null` | The name of the single top-level directory from the disarchive specification, if any. This is the directory Nix normally strips when unpacking an archive. |
 | `origin_urls` | list of strings | Upstream origin URLs extracted from the FOD's derivation environment, if any. Empty when no URLs are declared. |
 
 The `fod` field is a [FOD object](#fod-object).
