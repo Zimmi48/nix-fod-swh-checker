@@ -83,8 +83,11 @@ def try_disarchive(
     If the database has no entry, the embedded SWHID is unknown, or the
     database request fails, the function falls back to realising the FOD,
     unpacking the archive, and running ``disarchive disassemble`` locally.
+    When the database returned a spec but its embedded SWHID is unknown, that
+    spec is still passed to the local path so that ``disarchive disassemble``
+    can be skipped if the stripped directory SWHID is known.
     """
-    db_result = _try_disarchive_database(
+    db_result, db_spec, db_top_dir = _try_disarchive_database(
         fod,
         client,
         db_url=disarchive_db_url,
@@ -102,6 +105,8 @@ def try_disarchive(
         disarchive_binary=disarchive_binary,
         swh_identify_timeout=swh_identify_timeout,
         disarchive_timeout=disarchive_timeout,
+        db_spec=db_spec,
+        db_top_dir=db_top_dir,
         on_log=on_log,
     )
 
@@ -113,16 +118,20 @@ def _try_disarchive_database(
     db_url: str = _DISARCHIVE_DB_URL,
     timeout: float = 20.0,
     on_log: Callable[[str], None] | None = None,
-) -> SWHCheckResult | None:
-    """Query the disarchive database by FOD hash and return a result if known.
+) -> tuple[SWHCheckResult | None, str | None, str | None]:
+    """Query the disarchive database by FOD hash.
 
-    Returns ``None`` when the FOD hash cannot be used to query the database,
-    the database has no entry, the embedded SWHID is unknown, or the lookup
-    fails. In all of those cases the caller should fall back to the local
-    realise/unpack/disassemble path.
+    Returns a tuple ``(result, spec, top_dir)``. ``result`` is a
+    :class:`SWHCheckResult` when the database lookup succeeded and the embedded
+    SWHID is known. ``spec`` and ``top_dir`` are non-``None`` when the database
+    returned a usable specification, even if its embedded SWHID is unknown; the
+    caller can reuse them to skip ``disarchive disassemble`` in the local path.
+
+    When the FOD hash cannot be used, the database has no entry, or the lookup
+    fails, all three returned values are ``None``.
     """
     if not fod.hash_algo or not fod.hash_hex:
-        return None
+        return None, None, None
 
     url = f"{db_url}/{fod.hash_algo}/{fod.hash_hex}"
     if on_log:
@@ -133,26 +142,26 @@ def _try_disarchive_database(
     except requests.RequestException as exc:
         if on_log:
             on_log(f"{fod.label}: disarchive database lookup failed: {exc}")
-        return None
+        return None, None, None
 
     if response.status_code == 404:
         if on_log:
             on_log(f"{fod.label}: not found in disarchive database")
-        return None
+        return None, None, None
     if response.status_code != 200:
         if on_log:
             on_log(
                 f"{fod.label}: unexpected disarchive database status "
                 f"{response.status_code}"
             )
-        return None
+        return None, None, None
 
     spec = response.text
     disarchive_swhid = _extract_disarchive_swhid(spec)
     if not disarchive_swhid:
         if on_log:
             on_log(f"{fod.label}: disarchive database spec contains no directory SWHID")
-        return None
+        return None, spec, None
 
     disarchive_known = (
         client.lookup_known_swhids([disarchive_swhid]).get(disarchive_swhid, False)
@@ -163,7 +172,8 @@ def _try_disarchive_database(
                 f"{fod.label}: disarchive database returned {disarchive_swhid}, "
                 f"but it is not known to Software Heritage"
             )
-        return None
+        top_dir = _extract_disarchive_top_dir(spec)
+        return None, spec, top_dir
 
     top_dir = _extract_disarchive_top_dir(spec)
 
@@ -172,16 +182,20 @@ def _try_disarchive_database(
             f"{fod.label}: disarchive database returned known {disarchive_swhid}"
         )
 
-    return SWHCheckResult(
-        fod=fod,
-        known=True,
-        method=SWHLookupMethod.KNOWN_AFTER_DISARCHIVE,
-        detail=f"disarchive database returned {disarchive_swhid}",
-        swhid=disarchive_swhid,
-        swh_url=f"{_ARCHIVE_URL}/{disarchive_swhid}",
-        disarchive_spec=spec,
-        disarchive_swhid=disarchive_swhid,
-        disarchive_top_dir=top_dir,
+    return (
+        SWHCheckResult(
+            fod=fod,
+            known=True,
+            method=SWHLookupMethod.KNOWN_AFTER_DISARCHIVE,
+            detail=f"disarchive database returned {disarchive_swhid}",
+            swhid=disarchive_swhid,
+            swh_url=f"{_ARCHIVE_URL}/{disarchive_swhid}",
+            disarchive_spec=spec,
+            disarchive_swhid=disarchive_swhid,
+            disarchive_top_dir=top_dir,
+        ),
+        spec,
+        top_dir,
     )
 
 
