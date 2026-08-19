@@ -208,6 +208,8 @@ def _try_disarchive_local(
     disarchive_binary: str = "disarchive",
     swh_identify_timeout: float = 30.0,
     disarchive_timeout: float = 30.0,
+    db_spec: str | None = None,
+    db_top_dir: str | None = None,
     on_log: Callable[[str], None] | None = None,
 ) -> SWHCheckResult | None:
     """Realise a FOD, try to unpack it, and check its directory SWHID locally.
@@ -223,6 +225,11 @@ def _try_disarchive_local(
     SWHID is known but ``disarchive disassemble`` fails or times out, the
     result is reported as ``UNDETERMINED`` so the user knows the specification
     is missing.
+
+    If ``db_spec`` is provided (for example from the disarchive database),
+    ``disarchive disassemble`` is skipped and the provided specification is
+    used directly. In that case ``db_top_dir`` is used as ``disarchive_top_dir``
+    when it cannot be extracted from ``db_spec``.
     """
     try:
         archive_path = realise_fod(fod, nix_binary=nix_binary, on_log=on_log)
@@ -276,41 +283,46 @@ def _try_disarchive_local(
             swhid=stripped_swhid,
         )
 
-    # The stripped contents are known, so capture the disarchive specification
-    # that allows reconstructing the exact original archive.
-    try:
-        spec = disassemble_archive(
-            archive_path,
-            disarchive_binary=disarchive_binary,
-            timeout=disarchive_timeout,
-            on_log=on_log,
-        )
-    except DisarchiveTimeoutError as exc:
-        _cleanup(unpacked_path)
-        if on_log:
-            on_log(f"disarchive timed out for {archive_path}: {exc}")
-        return SWHCheckResult(
-            fod=fod,
-            known=None,
-            method=SWHLookupMethod.UNDETERMINED,
-            detail=f"contents known as {stripped_swhid} but disarchive timed out before capturing the spec",
-            swhid=stripped_swhid,
-            swh_url=f"{_ARCHIVE_URL}/{stripped_swhid}",
-        )
-    except DisarchiveError as exc:
-        # Without a disarchive specification we cannot reconstruct the exact
-        # original archive, so the result is not usable for a SWH-backed FOD.
-        _cleanup(unpacked_path)
-        if on_log:
-            on_log(f"disarchive failed for {archive_path}: {exc}")
-        return SWHCheckResult(
-            fod=fod,
-            known=None,
-            method=SWHLookupMethod.UNDETERMINED,
-            detail=f"contents known as {stripped_swhid} but disarchive failed before capturing the spec",
-            swhid=stripped_swhid,
-            swh_url=f"{_ARCHIVE_URL}/{stripped_swhid}",
-        )
+    # The stripped contents are known. If a database spec was already fetched,
+    # use it directly to avoid the slow local disassemble step.
+    if db_spec is not None:
+        spec = db_spec
+        disarchive_top_dir = _extract_disarchive_top_dir(spec) or db_top_dir
+    else:
+        try:
+            spec = disassemble_archive(
+                archive_path,
+                disarchive_binary=disarchive_binary,
+                timeout=disarchive_timeout,
+                on_log=on_log,
+            )
+        except DisarchiveTimeoutError as exc:
+            _cleanup(unpacked_path)
+            if on_log:
+                on_log(f"disarchive timed out for {archive_path}: {exc}")
+            return SWHCheckResult(
+                fod=fod,
+                known=None,
+                method=SWHLookupMethod.UNDETERMINED,
+                detail=f"contents known as {stripped_swhid} but disarchive timed out before capturing the spec",
+                swhid=stripped_swhid,
+                swh_url=f"{_ARCHIVE_URL}/{stripped_swhid}",
+            )
+        except DisarchiveError as exc:
+            # Without a disarchive specification we cannot reconstruct the exact
+            # original archive, so the result is not usable for a SWH-backed FOD.
+            _cleanup(unpacked_path)
+            if on_log:
+                on_log(f"disarchive failed for {archive_path}: {exc}")
+            return SWHCheckResult(
+                fod=fod,
+                known=None,
+                method=SWHLookupMethod.UNDETERMINED,
+                detail=f"contents known as {stripped_swhid} but disarchive failed before capturing the spec",
+                swhid=stripped_swhid,
+                swh_url=f"{_ARCHIVE_URL}/{stripped_swhid}",
+            )
+        disarchive_top_dir = stripped_top_dir
 
     disarchive_swhid = _extract_disarchive_swhid(spec)
     disarchive_known = (
@@ -336,7 +348,7 @@ def _try_disarchive_local(
         swh_url=f"{_ARCHIVE_URL}/{reported_swhid}" if known else None,
         disarchive_spec=spec,
         disarchive_swhid=disarchive_swhid,
-        disarchive_top_dir=stripped_top_dir,
+        disarchive_top_dir=disarchive_top_dir,
     )
 
 
