@@ -46,11 +46,22 @@ nix run .#nix-fod-swh-check -- check nixpkgs#hello
 Typical output:
 
 ```console
-[KNOWN] /nix/store/....drv
-    method=build_and_identify: built /nix/store/....-hello-2.10 and computed swh:1:dir:d198bc9d7a6bcf6db04f476d29314f157507d505
-    https://archive.softwareheritage.org/swh:1:dir:d198bc9d7a6bcf6db04f476d29314f157507d505
+[UNKNOWN] /nix/store/0nrb3h17g2hhf8ijisi7frcfvqwhya3w-coreutils-9.11.tar.xz.drv
+    method=known_after_disarchive: unpacked /nix/store/p59cz49l5faa67c72wxdql3jfj9gy2fn-coreutils-9.11.tar.xz and computed swh:1:dir:dae7aff18109b2d9b63aff073f6d557a44835450; contents not known
+[KNOWN] /nix/store/0p6bbqs599hggq6xvxn67x91pxszgqil-bison-3.8.2.tar.xz.drv
+    method=content_hash: content lookup by sha256:9bba0214ccf7f1079c5d59210045227bcf619519840ebfa80cd3849cff5a5bf2
+    https://archive.softwareheritage.org/swh:1:cnt:508b4a78e162c90fa0ee6346778476c285c9b764
+[KNOWN AFTER DISARCHIVE] /nix/store/1bxagw21mzw0pr7y9jcyjfyrlya5fnxz-hello-2.12.3.tar.gz.drv
+    method=known_after_disarchive: disarchive database returned swh:1:dir:5866e34da0c9663c2d93103f50c254a1a272ea36
+    https://archive.softwareheritage.org/swh:1:dir:5866e34da0c9663c2d93103f50c254a1a272ea36
+[KNOWN AFTER DISARCHIVE] /nix/store/1c0za6f5rxl66ch0lgihniwgipfnvfm6-byacc-20260126.tgz.drv
+    method=known_after_disarchive: unpacked /nix/store/rjf7864yrw8d9csm3kvfzxgc0ccl8c9j-byacc-20260126.tgz and computed swh:1:dir:e1efad6b896a4a66ef43eb068cbe1771c5e26b6f
+    https://archive.softwareheritage.org/swh:1:dir:e1efad6b896a4a66ef43eb068cbe1771c5e26b6f
+[KNOWN] /nix/store/zf8dvv680i9z2wpggik614r20n54hyii-hex0-1.9.1.drv
+    method=build_and_identify: built /nix/store/k7ilqdwdxx8v3vw6p0c4i06xfm6crygm-hex0-1.9.1 and computed swh:1:cnt:cd4e550fca3320c6f2f97605e238c222ae623621
+    https://archive.softwareheritage.org/swh:1:cnt:cd4e550fca3320c6f2f97605e238c222ae623621
 
-1 FOD(s) checked: 1 known, 0 known after disarchive, 0 unknown, 0 undetermined
+5 FOD(s) checked: 2 known, 2 known after disarchive, 1 unknown, 0 undetermined
 ```
 
 A Software Heritage API token is strongly recommended. Anonymous requests are heavily rate-limited. Set `SWH_API_TOKEN` or pass `--swh-api-token`.
