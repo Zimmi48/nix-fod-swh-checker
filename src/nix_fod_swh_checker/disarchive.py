@@ -51,10 +51,6 @@ class DisarchiveTimeoutError(DisarchiveError):
     """Raised when ``disarchive disassemble`` exceeds its timeout."""
 
 
-class DisarchiveDatabaseError(DisarchiveError):
-    """Raised when the disarchive database cannot be queried."""
-
-
 def try_disarchive(
     fod: FixedOutputDerivation,
     client: SWHClient,
@@ -65,7 +61,7 @@ def try_disarchive(
     swh_identify_timeout: float = 30.0,
     disarchive_timeout: float = 30.0,
     disarchive_db_url: str = _DISARCHIVE_DB_URL,
-    disarchive_db_timeout: float = 20.0,
+    skip_disarchive: bool = False,
     on_log: Callable[[str], None] | None = None,
 ) -> SWHCheckResult | None:
     """Check a FOD's archive contents, using the disarchive database as a cache.
@@ -74,26 +70,33 @@ def try_disarchive(
     successfully, or ``None`` when the FOD could not be realised, is not an
     archive, or could not be unpacked.
 
-    First, the GNU Guix disarchive database is queried by the FOD's hash. If
-    it returns a specification, the embedded directory SWHID is checked against
-    Software Heritage. When that SWHID is known, the result is reported
-    immediately without realising the FOD or invoking the local ``disarchive``
-    tool.
+    Unless ``skip_disarchive`` is ``True``, the GNU Guix disarchive database is
+    queried by the FOD's hash first. If it returns a specification, the
+    embedded directory SWHID is checked against Software Heritage. When that
+    SWHID is known, the result is reported immediately without realising the
+    FOD or invoking the local ``disarchive`` tool.
 
-    If the database has no entry, the embedded SWHID is unknown, or the
-    database request fails, the function falls back to realising the FOD,
-    unpacking the archive, and running ``disarchive disassemble`` locally.
-    When the database returned a spec but its embedded SWHID is unknown, that
-    spec is still passed to the local path so that ``disarchive disassemble``
-    can be skipped if the stripped directory SWHID is known.
+    If the database lookup is skipped, has no entry, the embedded SWHID is
+    unknown, or the database request fails, the function falls back to
+    realising the FOD, unpacking the archive, and running ``disarchive
+    disassemble`` locally. When the database returned a spec but its embedded
+    SWHID is unknown, that spec is still passed to the local path so that
+    ``disarchive disassemble`` can be skipped if the stripped directory SWHID
+    is known.
     """
-    db_result, db_spec, db_top_dir = _try_disarchive_database(
-        fod,
-        client,
-        db_url=disarchive_db_url,
-        timeout=disarchive_db_timeout,
-        on_log=on_log,
-    )
+    if skip_disarchive:
+        db_result: SWHCheckResult | None = None
+        db_spec: str | None = None
+        db_top_dir: str | None = None
+        if on_log:
+            on_log(f"{fod.label}: skipping disarchive database lookup")
+    else:
+        db_result, db_spec, db_top_dir = _try_disarchive_database(
+            fod,
+            client,
+            db_url=disarchive_db_url,
+            on_log=on_log,
+        )
     if db_result is not None:
         return db_result
 

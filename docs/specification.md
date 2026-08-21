@@ -67,7 +67,7 @@ If the checkpoint already contains results for some FODs, those FODs are skipped
 | `--swh-identify-timeout` `<seconds>` | `30.0` | Timeout for the `swh identify` command when realising a FOD. |
 | `--disarchive-timeout` `<seconds>` | `30.0` | Timeout for the `disarchive disassemble` command when capturing an archive specification. |
 | `--disarchive-db-url` `<url>` | `https://disarchive.guix.gnu.org` | Base URL of the GNU Guix disarchive database used to cache archive metadata. |
-| `--disarchive-db-timeout` `<seconds>` | `20.0` | Timeout for disarchive database lookups. |
+| `--skip-disarchive` | false | Do not query the GNU Guix disarchive database; always realise archives locally to capture their specification. |
 
 Incompatible option combinations are rejected with exit code `2`:
 

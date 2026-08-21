@@ -427,3 +427,32 @@ def test_try_disarchive_database_spec_without_swhid_falls_back(monkeypatch, tmp_
     assert isinstance(result, SWHCheckResult)
     assert result.known is True
     assert result.method == SWHLookupMethod.KNOWN_AFTER_DISARCHIVE
+
+
+def test_try_disarchive_skip_disarchive_skips_database_lookup(monkeypatch, tmp_path):
+    db_called = []
+
+    def fail_if_called(url, timeout=None):
+        db_called.append(url)
+        raise RuntimeError("disarchive database should not be queried")
+
+    monkeypatch.setattr(disarchive_module.requests, "get", fail_if_called)
+
+    monkeypatch.setattr(
+        disarchive_module,
+        "_try_disarchive_local",
+        lambda fod, client, **kwargs: SWHCheckResult(
+            fod=fod,
+            known=False,
+            method=SWHLookupMethod.KNOWN_AFTER_DISARCHIVE,
+            detail="local fallback",
+            swhid=KNOWN_DIRECTORY_SWHID,
+        ),
+    )
+
+    client = FakeSWHClient()
+    result = try_disarchive(make_fod(), client, skip_disarchive=True)
+    assert isinstance(result, SWHCheckResult)
+    assert not db_called
+    assert result.known is False
+    assert result.method == SWHLookupMethod.KNOWN_AFTER_DISARCHIVE

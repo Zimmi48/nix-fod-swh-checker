@@ -103,7 +103,7 @@ The resulting store path is passed to `swh identify --no-filename <path>` to com
 
 ### `try_disarchive`
 
-When a `git` or `flat` FOD is not directly known, `disarchive.py:try_disarchive` first queries the GNU Guix disarchive database as a fast cache, then falls back to realising the FOD locally.
+When a `git` or `flat` FOD is not directly known, `disarchive.py:try_disarchive` first queries the GNU Guix disarchive database as a fast cache, then falls back to realising the FOD locally. The database lookup can be disabled with the `--skip-disarchive` command-line option, in which case the local path is used immediately.
 
 The database lookup (`_try_disarchive_database`) sends a `GET` request to `<disarchive-db-url>/<hash_algo>/<hash_hex>`. The FOD must have both a hash algorithm and a hash value; otherwise the lookup is skipped and the local path is used. On HTTP 200 it receives a disarchive specification, extracts the embedded `swh:1:dir:...` SWHID, and checks it via `/known/`. If the SWHID is known, the function returns `KNOWN_AFTER_DISARCHIVE` immediately, using the database spec as `disarchive_spec` and the `directory-ref` `name` field as `disarchive_top_dir`. No local `nix build`, unpacking, or `disarchive disassemble` is performed.
 
