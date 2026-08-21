@@ -44,7 +44,7 @@ The command performs the following steps:
 2. Walk the returned derivation graph and collect every output that has a fixed hash.
 3. For each FOD, extract any upstream origin URLs from the derivation environment (see [Origin URLs](#origin-urls)).
 4. Choose a comparison strategy based on its `method` and hash algorithm (see [internals.md](internals.md#comparison-strategies)).
-5. Query the Software Heritage API.
+5. Query the Software Heritage API. For archives that are not directly known, the GNU Guix disarchive database may be queried first as a fast cache (see [internals.md](internals.md#try_disarchive)).
 6. Save each result to a checkpoint file as it is computed, unless `--no-checkpoint` is given.
 7. Print a human-readable report. If `-o`/`--output` is given, also write JSON results to the given path.
 
@@ -66,6 +66,8 @@ If the checkpoint already contains results for some FODs, those FODs are skipped
 | `--min-delay` `<seconds>` | `1.0` | Minimum delay between anonymous Software Heritage API requests. No delay is inserted when authenticated. |
 | `--swh-identify-timeout` `<seconds>` | `30.0` | Timeout for the `swh identify` command when realising a FOD. |
 | `--disarchive-timeout` `<seconds>` | `30.0` | Timeout for the `disarchive disassemble` command when capturing an archive specification. |
+| `--disarchive-db-url` `<url>` | `https://disarchive.guix.gnu.org` | Base URL of the GNU Guix disarchive database used to cache archive metadata. |
+| `--skip-disarchive` | false | Do not query the GNU Guix disarchive database; always realise archives locally to capture their specification. |
 
 Incompatible option combinations are rejected with exit code `2`:
 
@@ -111,7 +113,7 @@ When `-o`/`--output` is given, the file contains a JSON array of result objects.
 | `swh_url` | string or `null` | URL of the object on `https://archive.softwareheritage.org`, if known. |
 | `disarchive_spec` | string or `null` | The GNU Guix `disarchive` specification, if captured. |
 | `disarchive_swhid` | string or `null` | The SWHID embedded in the disarchive specification, if any. |
-| `disarchive_top_dir` | string or `null` | The name of the single top-level directory that was stripped before computing the stripped SWHID, if any. |
+| `disarchive_top_dir` | string or `null` | The name of the single top-level directory from the disarchive specification, if any. This is the directory Nix normally strips when unpacking an archive. |
 | `origin_urls` | list of strings | Upstream origin URLs extracted from the FOD's derivation environment, if any. Empty when no URLs are declared. |
 
 The `fod` field is a [FOD object](#fod-object).

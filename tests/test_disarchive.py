@@ -44,6 +44,31 @@ class FakeSWHClient:
         return {swhid: self.known_swhids.get(swhid, False) for swhid in swhids}
 
 
+def _make_disarchive_spec(top_dir: str, swhid: str) -> str:
+    """Return a minimal disarchive database spec with the given top dir and SWHID."""
+    return f"""(disarchive
+  (version 0)
+  (gzip-member
+    (name "{top_dir}.tar.gz")
+    (input (tarball
+             (name "{top_dir}.tar")
+             (headers
+               ("{top_dir}/"
+                (mode 493)
+                (typeflag 53))
+               ("{top_dir}/file.txt"
+                (size 5)))
+             (input (directory-ref
+                      (version 0)
+                      (name "{top_dir}")
+                      (addresses
+                        (swhid "{swhid}"))
+                      (digest
+                        (sha256
+                          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))))))))
+"""
+
+
 def _make_tar_archive(tmp_path, entries, suffix=".tar.gz"):
     archive = tmp_path / f"archive{suffix}"
     mode = "w:gz" if suffix.endswith(".gz") else "w"
@@ -175,3 +200,259 @@ def test_try_disarchive_disarchive_failure_is_undetermined(monkeypatch, tmp_path
     assert result.method == SWHLookupMethod.UNDETERMINED
     assert result.swhid == KNOWN_DIRECTORY_SWHID
     assert "disarchive failed" in result.detail
+
+
+def test_try_disarchive_reuses_database_spec_when_stripped_known(monkeypatch, tmp_path):
+    """When the database returns a spec whose embedded SWHID is unknown but the
+    stripped directory is known, the fetched spec is reused and disarchive is
+    not invoked locally.
+    """
+    spec = _make_disarchive_spec("src", "swh:1:dir:0000000000000000000000000000000000000000")
+
+    class FakeResponse:
+        status_code = 200
+        text = spec
+
+    monkeypatch.setattr(
+        disarchive_module.requests, "get", lambda url, timeout=None: FakeResponse()
+    )
+
+    archive = _make_tar_archive(tmp_path, [("src/file.txt", "hello")])
+
+    monkeypatch.setattr(
+        disarchive_module, "realise_fod", lambda fod, *, nix_binary, on_log=None: str(archive)
+    )
+
+    disassemble_called = []
+    original_disassemble = disarchive_module.disassemble_archive
+
+    def capturing_disassemble(archive_path, **kwargs):
+        disassemble_called.append(archive_path)
+        return original_disassemble(archive_path, **kwargs)
+
+    monkeypatch.setattr(disarchive_module, "disassemble_archive", capturing_disassemble)
+
+    client = FakeSWHClient(known_swhids={KNOWN_DIRECTORY_SWHID: True})
+    result = try_disarchive(make_fod(), client)
+    assert isinstance(result, SWHCheckResult)
+    assert result.known is True
+    assert result.method == SWHLookupMethod.KNOWN_AFTER_DISARCHIVE
+    assert result.swhid == KNOWN_DIRECTORY_SWHID
+    assert result.disarchive_spec == spec
+    assert result.disarchive_top_dir == "src"
+    assert not disassemble_called
+
+
+def test_try_disarchive_database_short_circuits_local_work(monkeypatch, tmp_path):
+    spec = _make_disarchive_spec("src", KNOWN_DIRECTORY_SWHID)
+
+    class FakeResponse:
+        status_code = 200
+        text = spec
+
+    monkeypatch.setattr(
+        disarchive_module.requests, "get", lambda url, timeout=None: FakeResponse()
+    )
+
+    # realise_fod should not be called when the database lookup succeeds.
+    realised = []
+
+    def fail_if_realised(fod, *, nix_binary, on_log=None):
+        realised.append(fod)
+        raise RuntimeError("realise_fod should not be called")
+
+    monkeypatch.setattr(disarchive_module, "realise_fod", fail_if_realised)
+
+    client = FakeSWHClient(known_swhids={KNOWN_DIRECTORY_SWHID: True})
+    result = try_disarchive(
+        make_fod(),
+        client,
+        disarchive_db_url="https://example.com/disarchive",
+    )
+    assert isinstance(result, SWHCheckResult)
+    assert result.known is True
+    assert result.method == SWHLookupMethod.KNOWN_AFTER_DISARCHIVE
+    assert result.swhid == KNOWN_DIRECTORY_SWHID
+    assert result.disarchive_swhid == KNOWN_DIRECTORY_SWHID
+    assert result.disarchive_spec == spec
+    assert result.disarchive_top_dir == "src"
+    assert not realised
+
+
+def test_try_disarchive_database_unknown_swhid_falls_back(monkeypatch, tmp_path):
+    spec = _make_disarchive_spec("src", KNOWN_DIRECTORY_SWHID)
+
+    class FakeResponse:
+        status_code = 200
+        text = spec
+
+    monkeypatch.setattr(
+        disarchive_module.requests, "get", lambda url, timeout=None: FakeResponse()
+    )
+
+    fallback = {}
+
+    def fake_local(fod, client, **kwargs):
+        fallback["kwargs"] = kwargs
+        return SWHCheckResult(
+            fod=fod,
+            known=False,
+            method=SWHLookupMethod.KNOWN_AFTER_DISARCHIVE,
+            detail="local fallback",
+            swhid=KNOWN_DIRECTORY_SWHID,
+        )
+
+    monkeypatch.setattr(disarchive_module, "_try_disarchive_local", fake_local)
+
+    client = FakeSWHClient()
+    result = try_disarchive(make_fod(), client)
+    assert isinstance(result, SWHCheckResult)
+    assert result.known is False
+    assert result.method == SWHLookupMethod.KNOWN_AFTER_DISARCHIVE
+    assert result.swhid == KNOWN_DIRECTORY_SWHID
+    assert fallback["kwargs"]["db_spec"] == spec
+    assert fallback["kwargs"]["db_top_dir"] == "src"
+
+
+def test_try_disarchive_database_missing_entry_falls_back(monkeypatch, tmp_path):
+    class FakeResponse:
+        status_code = 404
+        text = ""
+
+    monkeypatch.setattr(
+        disarchive_module.requests, "get", lambda url, timeout=None: FakeResponse()
+    )
+
+    monkeypatch.setattr(
+        disarchive_module,
+        "_try_disarchive_local",
+        lambda fod, client, **kwargs: SWHCheckResult(
+            fod=fod,
+            known=False,
+            method=SWHLookupMethod.KNOWN_AFTER_DISARCHIVE,
+            detail="local fallback",
+            swhid=KNOWN_DIRECTORY_SWHID,
+        ),
+    )
+
+    client = FakeSWHClient()
+    result = try_disarchive(make_fod(), client)
+    assert isinstance(result, SWHCheckResult)
+    assert result.known is False
+    assert result.method == SWHLookupMethod.KNOWN_AFTER_DISARCHIVE
+    assert result.swhid == KNOWN_DIRECTORY_SWHID
+
+
+def test_try_disarchive_database_request_error_falls_back(monkeypatch, tmp_path):
+    import requests as requests_lib
+
+    def fail_request(url, timeout=None):
+        raise requests_lib.RequestException("network down")
+
+    monkeypatch.setattr(disarchive_module.requests, "get", fail_request)
+
+    monkeypatch.setattr(
+        disarchive_module,
+        "_try_disarchive_local",
+        lambda fod, client, **kwargs: SWHCheckResult(
+            fod=fod,
+            known=False,
+            method=SWHLookupMethod.KNOWN_AFTER_DISARCHIVE,
+            detail="local fallback",
+            swhid=KNOWN_DIRECTORY_SWHID,
+        ),
+    )
+
+    client = FakeSWHClient()
+    result = try_disarchive(make_fod(), client)
+    assert isinstance(result, SWHCheckResult)
+    assert result.known is False
+    assert result.method == SWHLookupMethod.KNOWN_AFTER_DISARCHIVE
+
+
+def test_try_disarchive_database_no_hash_falls_back(monkeypatch, tmp_path):
+    spec = _make_disarchive_spec("src", KNOWN_DIRECTORY_SWHID)
+
+    class FakeResponse:
+        status_code = 200
+        text = spec
+
+    monkeypatch.setattr(
+        disarchive_module.requests, "get", lambda url, timeout=None: FakeResponse()
+    )
+
+    monkeypatch.setattr(
+        disarchive_module,
+        "_try_disarchive_local",
+        lambda fod, client, **kwargs: SWHCheckResult(
+            fod=fod,
+            known=True,
+            method=SWHLookupMethod.KNOWN_AFTER_DISARCHIVE,
+            detail="local fallback",
+            swhid=KNOWN_DIRECTORY_SWHID,
+        ),
+    )
+
+    client = FakeSWHClient(known_swhids={KNOWN_DIRECTORY_SWHID: True})
+    fod = make_fod(hash_algo=None, hash_hex=None)
+    result = try_disarchive(fod, client)
+    assert isinstance(result, SWHCheckResult)
+    assert result.known is True
+    assert result.method == SWHLookupMethod.KNOWN_AFTER_DISARCHIVE
+
+
+def test_try_disarchive_database_spec_without_swhid_falls_back(monkeypatch, tmp_path):
+    class FakeResponse:
+        status_code = 200
+        text = "(disarchive (version 0))"
+
+    monkeypatch.setattr(
+        disarchive_module.requests, "get", lambda url, timeout=None: FakeResponse()
+    )
+
+    monkeypatch.setattr(
+        disarchive_module,
+        "_try_disarchive_local",
+        lambda fod, client, **kwargs: SWHCheckResult(
+            fod=fod,
+            known=True,
+            method=SWHLookupMethod.KNOWN_AFTER_DISARCHIVE,
+            detail="local fallback",
+            swhid=KNOWN_DIRECTORY_SWHID,
+        ),
+    )
+
+    client = FakeSWHClient(known_swhids={KNOWN_DIRECTORY_SWHID: True})
+    result = try_disarchive(make_fod(), client)
+    assert isinstance(result, SWHCheckResult)
+    assert result.known is True
+    assert result.method == SWHLookupMethod.KNOWN_AFTER_DISARCHIVE
+
+
+def test_try_disarchive_skip_disarchive_skips_database_lookup(monkeypatch, tmp_path):
+    db_called = []
+
+    def fail_if_called(url, timeout=None):
+        db_called.append(url)
+        raise RuntimeError("disarchive database should not be queried")
+
+    monkeypatch.setattr(disarchive_module.requests, "get", fail_if_called)
+
+    monkeypatch.setattr(
+        disarchive_module,
+        "_try_disarchive_local",
+        lambda fod, client, **kwargs: SWHCheckResult(
+            fod=fod,
+            known=False,
+            method=SWHLookupMethod.KNOWN_AFTER_DISARCHIVE,
+            detail="local fallback",
+            swhid=KNOWN_DIRECTORY_SWHID,
+        ),
+    )
+
+    client = FakeSWHClient()
+    result = try_disarchive(make_fod(), client, skip_disarchive=True)
+    assert isinstance(result, SWHCheckResult)
+    assert not db_called
+    assert result.known is False
+    assert result.method == SWHLookupMethod.KNOWN_AFTER_DISARCHIVE

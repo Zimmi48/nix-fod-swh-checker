@@ -1299,6 +1299,29 @@ def test_build_swh_fods_skips_already_present_paths(monkeypatch, capsys, tmp_pat
     assert "already in the Nix store" not in err
 
 
+def test_check_skip_disarchive_passes_flag_to_check_fod(monkeypatch, capsys, tmp_path):
+    fod = _fod("a")
+    passed = {}
+
+    def fake_check_fod(fod, client, **kwargs):
+        passed["skip_disarchive"] = kwargs.get("skip_disarchive")
+        return SWHCheckResult(
+            fod=fod, known=True, method=SWHLookupMethod.CONTENT_HASH, detail="known"
+        )
+
+    monkeypatch.setattr(cli, "show_derivations_recursive", lambda *a, **k: {})
+    monkeypatch.setattr(cli, "iter_fixed_output_derivations", lambda d: iter([fod]))
+    monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: _NullContextClient())
+    monkeypatch.setattr(cli, "check_fod", fake_check_fod)
+    monkeypatch.setattr(cli, "default_checkpoint_path", lambda installable: tmp_path / "ckpt.json")
+
+    exit_code = cli.main(
+        ["check", "nixpkgs#hello", "--no-checkpoint", "--skip-disarchive", "--quiet"]
+    )
+    assert exit_code == 0
+    assert passed["skip_disarchive"] is True
+
+
 def test_build_swh_fods_fails_when_vault_not_cooked(monkeypatch, capsys, tmp_path):
     dir_swhid = "swh:1:dir:" + "b" * 40
     nix_file = tmp_path / "swh-backed-fods.nix"

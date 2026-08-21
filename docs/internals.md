@@ -103,7 +103,11 @@ The resulting store path is passed to `swh identify --no-filename <path>` to com
 
 ### `try_disarchive`
 
-When a `git` or `flat` FOD is not directly known, `disarchive.py:try_disarchive` attempts to treat it as an archive:
+When a `git` or `flat` FOD is not directly known, `disarchive.py:try_disarchive` first queries the GNU Guix disarchive database as a fast cache, then falls back to realising the FOD locally. The database lookup can be disabled with the `--skip-disarchive` command-line option, in which case the local path is used immediately.
+
+The database lookup (`_try_disarchive_database`) sends a `GET` request to `<disarchive-db-url>/<hash_algo>/<hash_hex>`. The FOD must have both a hash algorithm and a hash value; otherwise the lookup is skipped and the local path is used. On HTTP 200 it receives a disarchive specification, extracts the embedded `swh:1:dir:...` SWHID, and checks it via `/known/`. If the SWHID is known, the function returns `KNOWN_AFTER_DISARCHIVE` immediately, using the database spec as `disarchive_spec` and the `directory-ref` `name` field as `disarchive_top_dir`. No local `nix build`, unpacking, or `disarchive disassemble` is performed.
+
+If the database returns 404, the spec has no embedded SWHID, the database request fails, or the FOD has no usable hash, the function falls back to `_try_disarchive_local`. If the database returned a spec but its embedded SWHID is unknown, the spec is still forwarded to `_try_disarchive_local` so that, if the stripped directory SWHID is known locally, `disarchive disassemble` can be skipped and the fetched spec can be reused:
 
 1. Realise the FOD.
 2. If it is not a regular file, give up.
@@ -111,11 +115,11 @@ When a `git` or `flat` FOD is not directly known, `disarchive.py:try_disarchive`
 4. If the archive contains a single top-level directory, descend into it (Nix `stripHash` semantics).
 5. Compute the stripped directory SWHID with `swh identify`.
 6. Look up the stripped SWHID via `/known/`.
-7. If the stripped SWHID is known, capture a `disarchive disassemble` specification so the exact original archive can be reconstructed later.
+7. If the stripped SWHID is known, obtain a disarchive specification. If `_try_disarchive_database` already fetched a spec, reuse it; otherwise capture a fresh `disarchive disassemble` specification so the exact original archive can be reconstructed later.
 8. If the disarchive specification contains its own directory SWHID, look that up too.
 9. Report `KNOWN_AFTER_DISARCHIVE` if either SWHID is known; otherwise report `UNKNOWN`.
 
-If `swh identify` fails or times out after unpacking, the result is `UNDETERMINED`. If `disarchive disassemble` fails or times out, the result is also `UNDETERMINED`, but the stripped SWHID and URL are preserved: without a disarchive specification the exact original archive cannot be reconstructed, so the result cannot be turned into a SWH-backed FOD.
+If `swh identify` fails or times out after unpacking, the result is `UNDETERMINED`. If a fresh `disarchive disassemble` fails or times out, the result is also `UNDETERMINED`, but the stripped SWHID and URL are preserved: without a disarchive specification the exact original archive cannot be reconstructed, so the result cannot be turned into a SWH-backed FOD. When a database spec is reused, the local `disarchive disassemble` step is skipped entirely, so it cannot fail.
 
 The reported SWHID prefers the disarchive SWHID when it is known, because that is the directory `disarchive assemble` can rebuild from directly. Otherwise the stripped SWHID is used.
 

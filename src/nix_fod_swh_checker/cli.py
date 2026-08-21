@@ -256,6 +256,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="timeout in seconds for the 'disarchive disassemble' command on each archive (default: %(default)s)",
     )
     check_parser.add_argument(
+        "--disarchive-db-url",
+        type=str,
+        default="https://disarchive.guix.gnu.org",
+        help="base URL of the GNU Guix disarchive database used to cache archive metadata (default: %(default)s)",
+    )
+    check_parser.add_argument(
+        "--skip-disarchive",
+        action="store_true",
+        help="do not query the GNU Guix disarchive database; always realise archives locally",
+    )
+    check_parser.add_argument(
         "-o",
         "--output",
         default=None,
@@ -510,6 +521,8 @@ def _run_check_command(args: argparse.Namespace) -> int:
                         on_log=on_log,
                         swh_identify_timeout=args.swh_identify_timeout,
                         disarchive_timeout=args.disarchive_timeout,
+                        disarchive_db_url=args.disarchive_db_url,
+                        skip_disarchive=args.skip_disarchive,
                     )
                 except SWHError as exc:
                     print(f"warning: {exc}", file=sys.stderr)

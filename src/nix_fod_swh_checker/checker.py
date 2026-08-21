@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from .disarchive import try_disarchive
+from .disarchive import _DISARCHIVE_DB_URL, try_disarchive
 from .models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
 from .nix import NixCommandError, realise_fod
 from .swh import CONTENT_LOOKUP_ALGOS, SWHClient
@@ -41,6 +41,8 @@ def check_fod(
     swh_binary: str = "swh",
     swh_identify_timeout: float = 30.0,
     disarchive_timeout: float = 30.0,
+    disarchive_db_url: str = _DISARCHIVE_DB_URL,
+    skip_disarchive: bool = False,
     on_log: Callable[[str], None] | None = None,
 ) -> SWHCheckResult:
     """Check a single FOD against Software Heritage, choosing the most
@@ -56,6 +58,8 @@ def check_fod(
             swh_binary=swh_binary,
             swh_identify_timeout=swh_identify_timeout,
             disarchive_timeout=disarchive_timeout,
+            disarchive_db_url=disarchive_db_url,
+            skip_disarchive=skip_disarchive,
             on_log=on_log,
         )
 
@@ -69,6 +73,8 @@ def check_fod(
             swh_binary=swh_binary,
             swh_identify_timeout=swh_identify_timeout,
             disarchive_timeout=disarchive_timeout,
+            disarchive_db_url=disarchive_db_url,
+            skip_disarchive=skip_disarchive,
             on_log=on_log,
         )
 
@@ -96,6 +102,8 @@ def _check_via_content_hash(
     swh_binary: str = "swh",
     swh_identify_timeout: float = 30.0,
     disarchive_timeout: float = 30.0,
+    disarchive_db_url: str = _DISARCHIVE_DB_URL,
+    skip_disarchive: bool = False,
     on_log: Callable[[str], None] | None = None,
 ) -> SWHCheckResult:
     result = client.lookup_content(fod.hash_algo, fod.hash_hex)
@@ -123,6 +131,8 @@ def _check_via_content_hash(
         swh_binary=swh_binary,
         swh_identify_timeout=swh_identify_timeout,
         disarchive_timeout=disarchive_timeout,
+        disarchive_db_url=disarchive_db_url,
+        skip_disarchive=skip_disarchive,
         on_log=on_log,
     )
     if disarchive_result is not None:
@@ -152,6 +162,8 @@ def _check_via_swhid(
     swh_binary: str = "swh",
     swh_identify_timeout: float = 30.0,
     disarchive_timeout: float = 30.0,
+    disarchive_db_url: str = _DISARCHIVE_DB_URL,
+    skip_disarchive: bool = False,
     on_log: Callable[[str], None] | None = None,
 ) -> SWHCheckResult:
     # We don't know upfront whether the FOD output is a single file (SWH
@@ -177,6 +189,8 @@ def _check_via_swhid(
         swh_binary=swh_binary,
         swh_identify_timeout=swh_identify_timeout,
         disarchive_timeout=disarchive_timeout,
+        disarchive_db_url=disarchive_db_url,
+        skip_disarchive=skip_disarchive,
         on_log=on_log,
     )
     if disarchive_result is not None:
