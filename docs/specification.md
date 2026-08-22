@@ -277,10 +277,10 @@ The command then:
 1. Lists the attribute names defined in the Nix file.
 2. Runs `nix build --dry-run -f <file> <attrs> --json` to determine output paths and which derivations would be built locally versus fetched from a substituter.
 3. Checks which output paths are already in the local Nix store.
-4. For any missing vault-backed FODs whose derivation would be built locally, verifies that the corresponding vault flat archives are cooked on Software Heritage. FODs that would be fetched from a substituter do not require vault cooking.
-5. Builds the missing attributes with `nix build -f <file> <attrs>`.
+4. For any missing vault-backed FODs whose derivation would be built locally, verifies that the corresponding vault flat archives are cooked on Software Heritage. FODs that would be fetched from a substituter do not require vault cooking. FODs whose vault archive is not cooked are skipped with a warning instead of failing the command.
+5. Builds the remaining missing attributes with `nix build -f <file> <attrs>`.
 
-If all outputs are already in the store, the command reports this and exits `0` without building.
+If all outputs are already in the store or only uncooked vault archives remain, the command reports this and exits `0` without building.
 
 #### `build-swh-fods` options
 
@@ -300,7 +300,7 @@ If all outputs are already in the store, the command reports this and exits `0` 
 | Code | Meaning |
 |------|---------|
 | `0` | Success, or all outputs were already in the store, or there were no SWH-backed FODs to build. |
-| `1` | A `nix` command failed, a vault flat archive is not cooked, a Software Heritage API error occurred, or the checkpoint could not be read. |
+| `1` | A `nix` command failed, a Software Heritage API error occurred, or the checkpoint could not be read. |
 | `2` | Incompatible options were given. |
 
 ---
