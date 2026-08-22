@@ -1014,13 +1014,23 @@ def _run_build_swh_fods_command(args: argparse.Namespace) -> int:
         return 1
 
     if uncooked:
+        uncooked_attrs = {u[0] for u in uncooked}
         for attr, swhid, status in uncooked:
             print(
-                f"error: vault flat archive for {swhid} (attribute {attr!r}) "
-                f"is not cooked (status: {status}); run 'cook-swh-fods' first",
+                f"warning: vault flat archive for {swhid} (attribute {attr!r}) "
+                f"is not cooked (status: {status}); skipping; "
+                f"run 'cook-swh-fods' first",
                 file=sys.stderr,
             )
-        return 1
+        missing_attrs = [attr for attr in missing_attrs if attr not in uncooked_attrs]
+
+    if not missing_attrs:
+        print(
+            "all remaining SWH-backed FOD(s) are already in the Nix store "
+            "or skipped due to uncooked vault archives",
+            file=sys.stderr,
+        )
+        return 0
 
     build_extra = list(args.nix_build_arg)
     if args.no_substitute:

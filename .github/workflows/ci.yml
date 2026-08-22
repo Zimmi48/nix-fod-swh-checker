@@ -125,21 +125,9 @@ jobs:
         with:
           name: swh-backed-fods
 
-      - name: Build SWH-backed FODs (expected to fail if not cooked)
+      - name: Build SWH-backed FODs
         env:
           SWH_API_TOKEN: ${{ secrets.SWH_API_TOKEN }}
         run: |
-          set +e
-          output=$(nix run .#nix-fod-swh-check -- build-swh-fods swh-backed-fods.nix \
-            --no-substitute 2>&1)
-          status=$?
-          set -e
-          if [ $status -ne 0 ]; then
-            if echo "$output" | grep -q "not cooked"; then
-              echo "build-swh-fods failed with the expected vault-not-cooked error"
-            else
-              echo "build-swh-fods failed unexpectedly:"
-              echo "$output"
-              exit 1
-            fi
-          fi
+          nix run .#nix-fod-swh-check -- build-swh-fods swh-backed-fods.nix \
+            --no-substitute
