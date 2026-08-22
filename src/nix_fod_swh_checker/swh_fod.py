@@ -232,15 +232,20 @@ def _flat_fod_derivation(
     output_hash_mode: str,
     executable: bool = False,
 ) -> str:
-    executable_line = '  executable = "1";\n' if executable else ""
+    lines = [
+        f"  name = {nix_quote(name)};",
+        "  system = builtins.currentSystem;",
+        '  builder = "builtin:fetchurl";',
+        f"  outputHashMode = {nix_quote(output_hash_mode)};",
+        f"  outputHashAlgo = {nix_quote(hash_algo)};",
+        f"  outputHash = {nix_quote(hash_hex)};",
+    ]
+    if executable:
+        lines.append('  executable = "1";')
+    lines.append(f"  url = {nix_quote(url)};")
+    body = "\n".join(lines)
     return f"""builtins.derivation {{
-  name = {nix_quote(name)};
-  system = builtins.currentSystem;
-  builder = "builtin:fetchurl";
-  outputHashMode = {nix_quote(output_hash_mode)};
-  outputHashAlgo = {nix_quote(hash_algo)};
-  outputHash = {nix_quote(hash_hex)};
-{executable_line}  url = {nix_quote(url)};
+{body}
 }}
 """
 
