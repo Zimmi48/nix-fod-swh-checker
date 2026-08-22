@@ -29,6 +29,7 @@ class FixedOutputDerivation:
     hash_algo: str | None
     hash_hex: str | None
     origin_urls: list[str] = field(default_factory=list)
+    executable: bool = False
 
     @property
     def label(self) -> str:

@@ -76,6 +76,7 @@ def test_iter_fixed_output_derivations_filters_non_fods():
     nar_fod = next(f for f in fods if f.method == "nar")
     assert nar_fod.hash_algo == "sha256"
     assert nar_fod.origin_urls == ["https://example.com/source.tar.gz"]
+    assert not nar_fod.executable
 
 
 def test_iter_fixed_output_derivations_labels_non_out_output():
@@ -284,6 +285,26 @@ def test_iter_fixed_output_derivations_infers_flat_method_from_plain_hash():
 
     (fod,) = list(iter_fixed_output_derivations(derivations))
     assert fod.method == "flat"
+
+
+def test_iter_fixed_output_derivations_detects_executable_flag():
+    derivations = {
+        "/nix/store/exec.drv": {
+            "name": "exec",
+            "env": {"executable": "1"},
+            "outputs": {
+                "out": {
+                    "path": "/nix/store/exec-out",
+                    "method": "nar",
+                    "hashAlgo": "sha256",
+                    "hash": "aa" * 32,
+                }
+            },
+        },
+    }
+
+    (fod,) = list(iter_fixed_output_derivations(derivations))
+    assert fod.executable
 
 
 def test_show_derivations_recursive_parses_json(monkeypatch):
