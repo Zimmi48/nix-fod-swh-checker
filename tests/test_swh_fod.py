@@ -55,6 +55,17 @@ def test_content_hash_expression():
     assert "archive.softwareheritage.org/api/1/content/sha256:" + "a" * 64 in expr.nix_code
 
 
+def test_content_hash_expression_preserves_executable_flag():
+    result = make_result(
+        fod=make_fod(executable=True),
+        method=SWHLookupMethod.CONTENT_HASH,
+        swhid="swh:1:cnt:" + "b" * 40,
+    )
+    expr = swh_fod_expression(result)
+    assert isinstance(expr, SWHFodExpression)
+    assert 'executable = "1"' in expr.nix_code
+
+
 def test_content_swhid_expression():
     result = make_result(
         fod=make_fod(method="git", hash_algo="sha1", hash_hex="b" * 40),
@@ -79,6 +90,7 @@ def test_content_swhid_expression_uses_recursive_mode_for_nar_fod():
     assert isinstance(expr, SWHFodExpression)
     assert "builtin:fetchurl" in expr.nix_code
     assert "outputHashMode = \"recursive\"" in expr.nix_code
+    assert 'executable = "1"' in expr.nix_code
     assert "archive.softwareheritage.org/api/1/content/sha1_git:" + "b" * 40 in expr.nix_code
 
 
