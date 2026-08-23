@@ -188,6 +188,7 @@ def test_check_writes_json_output_with_all_documented_fields(monkeypatch, tmp_pa
         "hash_hex",
         "label",
         "origin_urls",
+        "executable",
     }
     assert fod_obj["drv_path"] == fod.drv_path
     assert fod_obj["output_name"] == "out"

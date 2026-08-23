@@ -467,6 +467,7 @@ def iter_fixed_output_derivations(
                 hash_algo=hash_algo,
                 hash_hex=_hash_hex(hash_hex, hash_algo),
                 origin_urls=_extract_origin_urls(env),
+                executable=_is_executable_fod(env),
             )
 
 
@@ -562,6 +563,17 @@ def _looks_like_base64(value: str) -> bool:
         return base64.b64encode(base64.b64decode(value, validate=True)) == value.encode()
     except Exception:
         return False
+
+
+def _is_executable_fod(env: dict) -> bool:
+    """Return True when a FOD's environment marks the downloaded file as executable.
+
+    ``builtin:fetchurl`` honours ``env.executable = "1"`` by setting the
+    output file's executable bit.  This matters for recursive/NAR-hashed
+    single-file FODs because the NAR hash depends on the file's permissions.
+    """
+    value = env.get("executable")
+    return value == "1" or value is True
 
 
 def _extract_origin_urls(env: dict) -> list[str]:

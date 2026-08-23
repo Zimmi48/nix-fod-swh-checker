@@ -119,6 +119,7 @@ def _content_hash_expression(result: SWHCheckResult) -> SWHFodExpression | None:
             hash_hex=fod.hash_hex,
             url=url,
             output_hash_mode="flat",
+            executable=fod.executable,
         ),
     )
 
@@ -145,6 +146,10 @@ def _content_swhid_expression(result: SWHCheckResult) -> SWHFodExpression | None
     url = f"{_SWH_API_URL}/content/sha1_git:{sha1_git}/raw/"
     hash_algo = fod.hash_algo or _algo_from_hash(fod.hash_hex) or "sha1"
     hash_hex = fod.hash_hex or sha1_git
+    # Recursive/NAR-hashed single-file FODs need the executable bit set so
+    # that ``builtin:fetchurl`` computes the NAR hash of an executable file
+    # rather than falling back to a flat content hash.
+    executable = output_hash_mode == "recursive" or fod.executable
     return SWHFodExpression(
         label=fod.label,
         nix_code=_flat_fod_derivation(
@@ -153,6 +158,7 @@ def _content_swhid_expression(result: SWHCheckResult) -> SWHFodExpression | None
             hash_hex=hash_hex,
             url=url,
             output_hash_mode=output_hash_mode,
+            executable=executable,
         ),
     )
 
@@ -224,15 +230,22 @@ def _flat_fod_derivation(
     hash_hex: str,
     url: str,
     output_hash_mode: str,
+    executable: bool = False,
 ) -> str:
+    lines = [
+        f"  name = {nix_quote(name)};",
+        "  system = builtins.currentSystem;",
+        '  builder = "builtin:fetchurl";',
+        f"  outputHashMode = {nix_quote(output_hash_mode)};",
+        f"  outputHashAlgo = {nix_quote(hash_algo)};",
+        f"  outputHash = {nix_quote(hash_hex)};",
+    ]
+    if executable:
+        lines.append('  executable = "1";')
+    lines.append(f"  url = {nix_quote(url)};")
+    body = "\n".join(lines)
     return f"""builtins.derivation {{
-  name = {nix_quote(name)};
-  system = builtins.currentSystem;
-  builder = "builtin:fetchurl";
-  outputHashMode = {nix_quote(output_hash_mode)};
-  outputHashAlgo = {nix_quote(hash_algo)};
-  outputHash = {nix_quote(hash_hex)};
-  url = {nix_quote(url)};
+{body}
 }}
 """
 
