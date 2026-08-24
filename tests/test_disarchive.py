@@ -429,6 +429,28 @@ def test_try_disarchive_database_spec_without_swhid_falls_back(monkeypatch, tmp_
     assert result.method == SWHLookupMethod.KNOWN_AFTER_DISARCHIVE
 
 
+def test_try_disarchive_undetermined_when_spec_is_invalid_false(monkeypatch, tmp_path):
+    """If disarchive returns the ``#f`` blueprint, the result is undetermined."""
+    archive = _make_tar_archive(tmp_path, [("src/file.txt", "hello")])
+
+    monkeypatch.setattr(
+        disarchive_module, "realise_fod", lambda fod, *, nix_binary, on_log=None: str(archive)
+    )
+
+    def fake_disassemble(archive_path, **kwargs):
+        return "(disarchive (version 0) #f)\n"
+
+    monkeypatch.setattr(disarchive_module, "disassemble_archive", fake_disassemble)
+
+    client = FakeSWHClient(known_swhids={KNOWN_DIRECTORY_SWHID: True})
+    result = try_disarchive(make_fod(), client)
+    assert isinstance(result, SWHCheckResult)
+    assert result.known is None
+    assert result.method == SWHLookupMethod.UNDETERMINED
+    assert result.swhid == KNOWN_DIRECTORY_SWHID
+    assert "could not capture a usable spec" in result.detail
+
+
 def test_try_disarchive_skip_disarchive_skips_database_lookup(monkeypatch, tmp_path):
     db_called = []
 

@@ -51,6 +51,25 @@ class DisarchiveTimeoutError(DisarchiveError):
     """Raised when ``disarchive disassemble`` exceeds its timeout."""
 
 
+def _is_valid_disarchive_spec(spec: str) -> bool:
+    """Return whether ``spec`` is a usable disarchive specification.
+
+    ``disarchive disassemble`` writes a wrapper of the form
+    ``(disarchive (version 0) <blueprint>)`` even when it cannot produce a
+    blueprint for the archive format.  In that case the inner blueprint is
+    ``#f`` and attempting to assemble it later fails deep inside disarchive
+    with a cryptic error.  We treat such specs as invalid.
+    """
+    if not spec or not spec.strip():
+        return False
+    # disarchive produces the wrapper with the blueprint on one line.  A
+    # successful spec therefore cannot be ``(disarchive (version 0) #f)``.
+    stripped = spec.strip()
+    if stripped == "(disarchive (version 0) #f)":
+        return False
+    return True
+
+
 def try_disarchive(
     fod: FixedOutputDerivation,
     client: SWHClient,
@@ -160,6 +179,11 @@ def _try_disarchive_database(
         return None, None, None
 
     spec = response.text
+    if not _is_valid_disarchive_spec(spec):
+        if on_log:
+            on_log(f"{fod.label}: disarchive database returned an invalid spec")
+        return None, None, None
+
     disarchive_swhid = _extract_disarchive_swhid(spec)
     if not disarchive_swhid:
         if on_log:
@@ -325,6 +349,23 @@ def _try_disarchive_local(
                 swhid=stripped_swhid,
                 swh_url=f"{_ARCHIVE_URL}/{stripped_swhid}",
             )
+
+        if not _is_valid_disarchive_spec(spec):
+            _cleanup(unpacked_path)
+            if on_log:
+                on_log(
+                    f"disarchive produced an invalid spec for {archive_path} "
+                    "(unsupported archive format)"
+                )
+            return SWHCheckResult(
+                fod=fod,
+                known=None,
+                method=SWHLookupMethod.UNDETERMINED,
+                detail=f"contents known as {stripped_swhid} but disarchive could not capture a usable spec",
+                swhid=stripped_swhid,
+                swh_url=f"{_ARCHIVE_URL}/{stripped_swhid}",
+            )
+
         disarchive_top_dir = stripped_top_dir
 
     disarchive_swhid = _extract_disarchive_swhid(spec)
@@ -405,8 +446,10 @@ def disassemble_archive(
             on_log(f"capturing disarchive specification for {archive_path}...")
         subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=timeout)
         spec = Path(spec_path).read_text()
-        if not spec.strip():
-            raise DisarchiveError(f"disarchive produced an empty spec for {archive_path}")
+        if not _is_valid_disarchive_spec(spec):
+            raise DisarchiveError(
+                f"disarchive produced an invalid spec for {archive_path}"
+            )
         return spec
     except subprocess.TimeoutExpired as exc:
         raise DisarchiveTimeoutError(
