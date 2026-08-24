@@ -44,6 +44,13 @@
         # Re-export the locked nixpkgs input's hello package so the
         # integration job can use a reproducible, pinned installable.
         packages.hello = nixpkgs.legacyPackages.${system}.hello;
+        # Empty derivation used to warm the Nix store cache in CI with the
+        # exact nixpkgs tooling needed by generated SWH-backed FODs.
+        packages.cache-warmer = pkgs.stdenv.mkDerivation {
+          name = "cache-warmer";
+          nativeBuildInputs = [ pkgs.disarchive pkgs.curl pkgs.cacert pkgs.gnutar ];
+          buildCommand = "mkdir -p $out";
+        };
 
         # Fixed-output derivations used to test parser normalization across
         # Nix implementations.  These derivations are never built; they only
