@@ -1,11 +1,14 @@
 """Tests for SWH-backed FOD expression generation."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from nix_fod_swh_checker.models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
 from nix_fod_swh_checker.swh_fod import (
     SWHFodExpression,
+    cache_warmer_derivation,
     swh_fod_expression,
     swh_fods_expression,
     vault_swhids_for_results,
@@ -129,6 +132,7 @@ def test_directory_swhid_expression():
     assert "pkgs.stdenv.mkDerivation" in expr.nix_code
     assert "outputHashMode = \"recursive\"" in expr.nix_code
     assert f"vault/flat/{swhid}/raw" in expr.nix_code
+    assert "nativeBuildInputs = [ pkgs.curl pkgs.cacert pkgs.gnutar pkgs.bzip2 pkgs.xz ];" in expr.nix_code
     assert "curl -L -f -o tmp/bundle" in expr.nix_code
     assert "tar -xjf tmp/bundle" in expr.nix_code
 
@@ -187,6 +191,10 @@ def test_disarchive_expression_with_direct_swhid():
     assert "outputHashMode = \"flat\"" in expr.nix_code
     assert "pkgs.stdenv.mkDerivation" in expr.nix_code
     assert "builtins.toFile \"disarchive.spec\"" in expr.nix_code
+    assert (
+        "nativeBuildInputs = [ pkgs.disarchive pkgs.curl pkgs.cacert pkgs.gnutar pkgs.bzip2 pkgs.xz ];"
+        in expr.nix_code
+    )
     assert "disarchive assemble" in expr.nix_code
     assert "curl -L -f -o tmp/bundle" in expr.nix_code
     assert "tar -xjf tmp/bundle" in expr.nix_code
@@ -209,6 +217,10 @@ def test_disarchive_expression_with_wrapped_stripped_swhid():
     assert "outputHashMode = \"flat\"" in expr.nix_code
     assert "pkgs.stdenv.mkDerivation" in expr.nix_code
     assert f"vault/flat/{stripped}/raw" in expr.nix_code
+    assert (
+        "nativeBuildInputs = [ pkgs.disarchive pkgs.curl pkgs.cacert pkgs.gnutar pkgs.bzip2 pkgs.xz ];"
+        in expr.nix_code
+    )
     assert "tmp/wrapped/$topDir" in expr.nix_code
     assert 'topDir = "hello-1.0"' in expr.nix_code
     assert "disarchive assemble" in expr.nix_code
@@ -310,6 +322,14 @@ def test_write_swh_fods_nix_calls_on_log(tmp_path):
     logs = []
     write_swh_fods_nix(str(tmp_path / "out.nix"), results, on_log=logs.append)
     assert any("wrote 1 SWH-backed FOD" in log for log in logs)
+
+
+def test_checked_in_cache_warmer_matches_generator():
+    path = Path(__file__).resolve().parents[1] / "nix" / "cache-warmer.nix"
+    if not path.exists():
+        pytest.skip("checked-in cache warmer derivation not available in this test environment")
+    checked_in = path.read_text()
+    assert checked_in == cache_warmer_derivation()
 
 
 def test_vault_swhids_for_content_hash_returns_empty():

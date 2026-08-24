@@ -25,6 +25,15 @@ _SWH_API_URL = "https://archive.softwareheritage.org/api/1"
 _DEFAULT_NIXPKGS_URL = "https://github.com/NixOS/nixpkgs/archive/e72e4f299401a3689d4b3d5fc6496b11db7064eb.tar.gz"
 _DEFAULT_NIXPKGS_SHA256 = "sha256-8fsyqeO+mJqvIzeO4xIpgJe/f7MTbbVTEC6RT6WSXNs="
 
+_ARCHIVE_BUILD_TOOLS = (
+    "pkgs.curl",
+    "pkgs.cacert",
+    "pkgs.gnutar",
+    "pkgs.bzip2",
+    "pkgs.xz",
+)
+_DISARCHIVE_BUILD_TOOLS = ("pkgs.disarchive",) + _ARCHIVE_BUILD_TOOLS
+
 
 @dataclass
 class SWHFodExpression:
@@ -250,6 +259,22 @@ def _flat_fod_derivation(
 """
 
 
+def _archive_native_build_inputs(*, include_disarchive: bool) -> str:
+    tools = _DISARCHIVE_BUILD_TOOLS if include_disarchive else _ARCHIVE_BUILD_TOOLS
+    return "[ " + " ".join(tools) + " ]"
+
+
+def cache_warmer_derivation() -> str:
+    """Return the checked-in cache warmer derivation code."""
+    return f"""{{ pkgs }}:
+pkgs.stdenv.mkDerivation {{
+  name = "cache-warmer";
+  nativeBuildInputs = {_archive_native_build_inputs(include_disarchive=True)};
+  buildCommand = "mkdir -p $out";
+}}
+"""
+
+
 def _directory_fod_derivation(
     *,
     name: str,
@@ -263,7 +288,7 @@ def _directory_fod_derivation(
   outputHashMode = "recursive";
   outputHashAlgo = {nix_quote(hash_algo)};
   outputHash = {nix_quote(hash_hex)};
-  nativeBuildInputs = [ pkgs.curl pkgs.cacert pkgs.gnutar pkgs.bzip2 pkgs.xz ];
+      nativeBuildInputs = {_archive_native_build_inputs(include_disarchive=False)};
   buildCommand = ''
     export SSL_CERT_FILE="${{pkgs.cacert}}/etc/ssl/certs/ca-bundle.crt"
     mkdir -p tmp
@@ -299,7 +324,7 @@ pkgs.stdenv.mkDerivation {{
   outputHashMode = "flat";
   outputHashAlgo = {nix_quote(hash_algo)};
   outputHash = {nix_quote(hash_hex)};
-  nativeBuildInputs = [ pkgs.disarchive pkgs.curl pkgs.cacert pkgs.gnutar pkgs.bzip2 pkgs.xz ];
+  nativeBuildInputs = {_archive_native_build_inputs(include_disarchive=True)};
   buildCommand = ''
     export SSL_CERT_FILE="${{pkgs.cacert}}/etc/ssl/certs/ca-bundle.crt"
     mkdir -p tmp
@@ -336,7 +361,7 @@ pkgs.stdenv.mkDerivation {{
   outputHashMode = "flat";
   outputHashAlgo = {nix_quote(hash_algo)};
   outputHash = {nix_quote(hash_hex)};
-  nativeBuildInputs = [ pkgs.disarchive pkgs.curl pkgs.cacert pkgs.gnutar pkgs.bzip2 pkgs.xz ];
+  nativeBuildInputs = {_archive_native_build_inputs(include_disarchive=True)};
   topDir = {nix_quote(top_dir)};
   buildCommand = ''
     export SSL_CERT_FILE="${{pkgs.cacert}}/etc/ssl/certs/ca-bundle.crt"
