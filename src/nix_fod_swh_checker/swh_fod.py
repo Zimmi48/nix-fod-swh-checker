@@ -263,12 +263,18 @@ def _directory_fod_derivation(
   outputHashMode = "recursive";
   outputHashAlgo = {nix_quote(hash_algo)};
   outputHash = {nix_quote(hash_hex)};
-  nativeBuildInputs = [ pkgs.curl pkgs.cacert pkgs.gnutar ];
+  nativeBuildInputs = [ pkgs.curl pkgs.cacert pkgs.gnutar pkgs.bzip2 pkgs.xz ];
   buildCommand = ''
     export SSL_CERT_FILE="${{pkgs.cacert}}/etc/ssl/certs/ca-bundle.crt"
     mkdir -p tmp
-    curl -L -f -o tmp/bundle.tar.bz2 {nix_quote(url)}
-    tar -xjf tmp/bundle.tar.bz2 -C tmp
+    curl -L -f -o tmp/bundle {nix_quote(url)}
+    case $(file -b --mime-type tmp/bundle) in
+      application/x-bzip2) tar -xjf tmp/bundle -C tmp ;;
+      application/x-xz) tar -xJf tmp/bundle -C tmp ;;
+      application/gzip) tar -xzf tmp/bundle -C tmp ;;
+      application/x-tar) tar -xf tmp/bundle -C tmp ;;
+      *) tar -xaf tmp/bundle -C tmp ;;
+    esac
     dir=$(find tmp -mindepth 1 -maxdepth 1 -type d | head -n1)
     mv "$dir" $out
   '';
@@ -293,12 +299,18 @@ pkgs.stdenv.mkDerivation {{
   outputHashMode = "flat";
   outputHashAlgo = {nix_quote(hash_algo)};
   outputHash = {nix_quote(hash_hex)};
-  nativeBuildInputs = [ pkgs.disarchive pkgs.curl pkgs.cacert pkgs.gnutar ];
+  nativeBuildInputs = [ pkgs.disarchive pkgs.curl pkgs.cacert pkgs.gnutar pkgs.bzip2 pkgs.xz ];
   buildCommand = ''
     export SSL_CERT_FILE="${{pkgs.cacert}}/etc/ssl/certs/ca-bundle.crt"
     mkdir -p tmp
-    curl -L -f -o tmp/bundle.tar.bz2 {nix_quote(url)}
-    tar -xjf tmp/bundle.tar.bz2 -C tmp
+    curl -L -f -o tmp/bundle {nix_quote(url)}
+    case $(file -b --mime-type tmp/bundle) in
+      application/x-bzip2) tar -xjf tmp/bundle -C tmp ;;
+      application/x-xz) tar -xJf tmp/bundle -C tmp ;;
+      application/gzip) tar -xzf tmp/bundle -C tmp ;;
+      application/x-tar) tar -xf tmp/bundle -C tmp ;;
+      *) tar -xaf tmp/bundle -C tmp ;;
+    esac
     dir=$(find tmp -mindepth 1 -maxdepth 1 -type d | head -n1)
     disarchive assemble "$dir" ${{specFile}} -o $out
   '';
@@ -324,13 +336,19 @@ pkgs.stdenv.mkDerivation {{
   outputHashMode = "flat";
   outputHashAlgo = {nix_quote(hash_algo)};
   outputHash = {nix_quote(hash_hex)};
-  nativeBuildInputs = [ pkgs.disarchive pkgs.curl pkgs.cacert pkgs.gnutar ];
+  nativeBuildInputs = [ pkgs.disarchive pkgs.curl pkgs.cacert pkgs.gnutar pkgs.bzip2 pkgs.xz ];
   topDir = {nix_quote(top_dir)};
   buildCommand = ''
     export SSL_CERT_FILE="${{pkgs.cacert}}/etc/ssl/certs/ca-bundle.crt"
     mkdir -p tmp
-    curl -L -f -o tmp/bundle.tar.bz2 {nix_quote(url)}
-    tar -xjf tmp/bundle.tar.bz2 -C tmp
+    curl -L -f -o tmp/bundle {nix_quote(url)}
+    case $(file -b --mime-type tmp/bundle) in
+      application/x-bzip2) tar -xjf tmp/bundle -C tmp ;;
+      application/x-xz) tar -xJf tmp/bundle -C tmp ;;
+      application/gzip) tar -xzf tmp/bundle -C tmp ;;
+      application/x-tar) tar -xf tmp/bundle -C tmp ;;
+      *) tar -xaf tmp/bundle -C tmp ;;
+    esac
     stripped=$(find tmp -mindepth 1 -maxdepth 1 -type d | head -n1)
     mkdir -p "tmp/wrapped/$topDir"
     find "$stripped" -mindepth 1 -maxdepth 1 -exec mv {{}} "tmp/wrapped/$topDir/" \\;

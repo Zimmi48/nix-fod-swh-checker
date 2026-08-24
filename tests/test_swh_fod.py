@@ -129,8 +129,8 @@ def test_directory_swhid_expression():
     assert "pkgs.stdenv.mkDerivation" in expr.nix_code
     assert "outputHashMode = \"recursive\"" in expr.nix_code
     assert f"vault/flat/{swhid}/raw" in expr.nix_code
-    assert "curl -L -f -o tmp/bundle.tar.bz2" in expr.nix_code
-    assert "tar -xjf tmp/bundle.tar.bz2" in expr.nix_code
+    assert "curl -L -f -o tmp/bundle" in expr.nix_code
+    assert "tar -xjf tmp/bundle" in expr.nix_code
 
 
 def test_directory_swhid_expression_infers_algo_from_sri_hash():
@@ -158,8 +158,8 @@ def test_build_and_identify_directory_expression():
     assert "pkgs.stdenv.mkDerivation" in expr.nix_code
     assert "outputHashMode = \"recursive\"" in expr.nix_code
     assert f"vault/flat/{swhid}/raw" in expr.nix_code
-    assert "curl -L -f -o tmp/bundle.tar.bz2" in expr.nix_code
-    assert "tar -xjf tmp/bundle.tar.bz2" in expr.nix_code
+    assert "curl -L -f -o tmp/bundle" in expr.nix_code
+    assert "tar -xjf tmp/bundle" in expr.nix_code
 
 
 def test_disarchive_expression_requires_spec():
@@ -188,8 +188,8 @@ def test_disarchive_expression_with_direct_swhid():
     assert "pkgs.stdenv.mkDerivation" in expr.nix_code
     assert "builtins.toFile \"disarchive.spec\"" in expr.nix_code
     assert "disarchive assemble" in expr.nix_code
-    assert "curl -L -f -o tmp/bundle.tar.bz2" in expr.nix_code
-    assert "tar -xjf tmp/bundle.tar.bz2" in expr.nix_code
+    assert "curl -L -f -o tmp/bundle" in expr.nix_code
+    assert "tar -xjf tmp/bundle" in expr.nix_code
     assert "(disarchive (version 0))" in expr.nix_code
 
 
@@ -212,8 +212,8 @@ def test_disarchive_expression_with_wrapped_stripped_swhid():
     assert "tmp/wrapped/$topDir" in expr.nix_code
     assert 'topDir = "hello-1.0"' in expr.nix_code
     assert "disarchive assemble" in expr.nix_code
-    assert "curl -L -f -o tmp/bundle.tar.bz2" in expr.nix_code
-    assert "tar -xjf tmp/bundle.tar.bz2" in expr.nix_code
+    assert "curl -L -f -o tmp/bundle" in expr.nix_code
+    assert "tar -xjf tmp/bundle" in expr.nix_code
 
 
 def test_disarchive_spec_is_quoted_for_nix():
