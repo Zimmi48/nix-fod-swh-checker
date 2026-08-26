@@ -451,6 +451,146 @@ def test_try_disarchive_undetermined_when_spec_is_invalid_false(monkeypatch, tmp
     assert "could not capture a usable spec" in result.detail
 
 
+def test_try_disarchive_caches_invalid_local_spec_as_miss(monkeypatch, tmp_path):
+    """An invalid spec produced by local disarchive is cached as a miss."""
+    import subprocess as subprocess_module
+
+    from nix_fod_swh_checker.cache import Cache
+
+    archive = _make_tar_archive(tmp_path, [("src/file.txt", "hello")])
+    cache = Cache(tmp_path / "cache.json")
+
+    monkeypatch.setattr(
+        disarchive_module, "realise_fod", lambda fod, *, nix_binary, on_log=None: str(archive)
+    )
+
+    calls = []
+    original_subprocess_run = disarchive_module.subprocess.run
+
+    def fake_subprocess_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[1] == "identify":
+            # Let the real ``swh identify`` tool run; it is available in the
+            # test environment and produces the stripped directory SWHID.
+            return original_subprocess_run(cmd, **kwargs)
+        # Write the invalid disarchive spec to the output file requested by
+        # ``disarchive disassemble`` so the real caching path is exercised.
+        assert cmd[1] == "disassemble"
+        spec_path = cmd[cmd.index("-o") + 1]
+        Path(spec_path).write_text("(disarchive (version 0) #f)\n")
+        return subprocess_module.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(disarchive_module.subprocess, "run", fake_subprocess_run)
+
+    client = FakeSWHClient(known_swhids={KNOWN_DIRECTORY_SWHID: True})
+    fod = make_fod()
+    result1 = try_disarchive(fod, client, cache=cache)
+    assert result1.known is None
+    assert result1.method == SWHLookupMethod.UNDETERMINED
+    # One call for ``swh identify`` and one for ``disarchive disassemble``.
+    assert len(calls) == 2
+
+    cache.save()
+    cache2 = Cache(tmp_path / "cache.json")
+    result2 = try_disarchive(fod, client, cache=cache2)
+    assert result2.known is None
+    assert result2.method == SWHLookupMethod.UNDETERMINED
+    # The cached invalid spec must prevent a second ``disarchive disassemble``.
+    assert len(calls) == 2
+
+
+def test_try_disarchive_caches_disarchive_timeout_as_miss(monkeypatch, tmp_path):
+    """A disarchive timeout is cached as a miss and reused with lower timeouts."""
+    import subprocess as subprocess_module
+
+    from nix_fod_swh_checker.cache import Cache
+
+    archive = _make_tar_archive(tmp_path, [("src/file.txt", "hello")])
+    cache = Cache(tmp_path / "cache.json")
+
+    monkeypatch.setattr(
+        disarchive_module, "realise_fod", lambda fod, *, nix_binary, on_log=None: str(archive)
+    )
+
+    calls = []
+    original_subprocess_run = disarchive_module.subprocess.run
+
+    def fake_subprocess_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[1] == "identify":
+            return original_subprocess_run(cmd, **kwargs)
+        assert cmd[1] == "disassemble"
+        raise subprocess_module.TimeoutExpired(cmd, kwargs["timeout"])
+
+    monkeypatch.setattr(disarchive_module.subprocess, "run", fake_subprocess_run)
+
+    client = FakeSWHClient(known_swhids={KNOWN_DIRECTORY_SWHID: True})
+    fod = make_fod()
+    result1 = try_disarchive(fod, client, cache=cache, disarchive_timeout=1.0)
+    assert result1.known is None
+    assert result1.method == SWHLookupMethod.UNDETERMINED
+    assert "timed out" in result1.detail
+    # One call for ``swh identify`` and one for ``disarchive disassemble``.
+    assert len(calls) == 2
+
+    cache.save()
+    cache2 = Cache(tmp_path / "cache.json")
+    result2 = try_disarchive(fod, client, cache=cache2, disarchive_timeout=0.5)
+    assert result2.known is None
+    assert result2.method == SWHLookupMethod.UNDETERMINED
+    assert "timed out" in result2.detail
+    # The cached timeout must prevent a second ``disarchive disassemble``.
+    assert len(calls) == 2
+
+
+def test_try_disarchive_ignores_cached_disarchive_timeout_when_increased(monkeypatch, tmp_path):
+    """A cached disarchive timeout is ignored when the timeout is increased."""
+    import subprocess as subprocess_module
+
+    from nix_fod_swh_checker.cache import Cache
+
+    archive = _make_tar_archive(tmp_path, [("src/file.txt", "hello")])
+    cache = Cache(tmp_path / "cache.json")
+
+    monkeypatch.setattr(
+        disarchive_module, "realise_fod", lambda fod, *, nix_binary, on_log=None: str(archive)
+    )
+
+    calls = []
+    original_subprocess_run = disarchive_module.subprocess.run
+
+    def fake_subprocess_run(cmd, **kwargs):
+        calls.append((cmd[1], kwargs.get("timeout")))
+        if cmd[1] == "identify":
+            return original_subprocess_run(cmd, **kwargs)
+        assert cmd[1] == "disassemble"
+        if kwargs["timeout"] <= 1.0:
+            raise subprocess_module.TimeoutExpired(cmd, kwargs["timeout"])
+        # Return a valid spec on the second call with the higher timeout.
+        spec_path = cmd[cmd.index("-o") + 1]
+        Path(spec_path).write_text(
+            _make_disarchive_spec("src", KNOWN_DIRECTORY_SWHID)
+        )
+        return subprocess_module.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(disarchive_module.subprocess, "run", fake_subprocess_run)
+
+    client = FakeSWHClient(known_swhids={KNOWN_DIRECTORY_SWHID: True})
+    fod = make_fod()
+    result1 = try_disarchive(fod, client, cache=cache, disarchive_timeout=1.0)
+    assert result1.known is None
+    assert result1.method == SWHLookupMethod.UNDETERMINED
+    assert len(calls) == 2
+
+    cache.save()
+    cache2 = Cache(tmp_path / "cache.json")
+    result2 = try_disarchive(fod, client, cache=cache2, disarchive_timeout=2.0)
+    assert result2.known is True
+    assert result2.method == SWHLookupMethod.KNOWN_AFTER_DISARCHIVE
+    # ``swh identify`` is still cached, so only ``disarchive disassemble`` runs again.
+    assert len(calls) == 3
+
+
 def test_try_disarchive_skip_disarchive_skips_database_lookup(monkeypatch, tmp_path):
     db_called = []
 
@@ -478,3 +618,141 @@ def test_try_disarchive_skip_disarchive_skips_database_lookup(monkeypatch, tmp_p
     assert not db_called
     assert result.known is False
     assert result.method == SWHLookupMethod.KNOWN_AFTER_DISARCHIVE
+
+
+def _default_fod_cache_prefix(fod):
+    """Return the cache key prefix used by default for ``make_fod()`` FODs."""
+    return f"{fod.hash_algo}:{fod.hash_hex}"
+
+
+def test_try_disarchive_local_uses_cache_to_skip_realisation(monkeypatch, tmp_path):
+    """When the stripped SWHID and disarchive spec are cached, no realisation."""
+    from nix_fod_swh_checker.cache import Cache
+
+    cache = Cache(tmp_path / "cache.json")
+    fod = make_fod(output_path="/nix/store/cached-archive.tar.gz")
+    prefix = _default_fod_cache_prefix(fod)
+    cache.set(
+        f"tool:swh_identify:{prefix}:stripped",
+        {"swhid": KNOWN_DIRECTORY_SWHID},
+        is_miss=False,
+    )
+    spec = _make_disarchive_spec("src", KNOWN_DIRECTORY_SWHID)
+    cache.set(
+        f"tool:disassemble:{prefix}:disassemble",
+        {"spec": spec},
+        is_miss=False,
+    )
+
+    realised = []
+
+    def fail_if_realised(fod, *, nix_binary, on_log=None):
+        realised.append(fod)
+        raise RuntimeError("realise_fod should not be called")
+
+    monkeypatch.setattr(disarchive_module, "realise_fod", fail_if_realised)
+
+    client = FakeSWHClient(known_swhids={KNOWN_DIRECTORY_SWHID: True})
+    result = try_disarchive(fod, client, cache=cache)
+    assert isinstance(result, SWHCheckResult)
+    assert not realised
+    assert result.known is True
+    assert result.method == SWHLookupMethod.KNOWN_AFTER_DISARCHIVE
+    assert result.swhid == KNOWN_DIRECTORY_SWHID
+    assert result.disarchive_spec == spec
+    assert result.disarchive_top_dir == "src"
+
+
+def test_try_disarchive_local_cache_unknown_stripped_swhid_skips_realisation(
+    monkeypatch, tmp_path
+):
+    """A cached stripped SWHID that is not known lets us return UNKNOWN immediately."""
+    from nix_fod_swh_checker.cache import Cache
+
+    cache = Cache(tmp_path / "cache.json")
+    fod = make_fod(output_path="/nix/store/cached-archive.tar.gz")
+    prefix = _default_fod_cache_prefix(fod)
+    cache.set(
+        f"tool:swh_identify:{prefix}:stripped",
+        {"swhid": KNOWN_DIRECTORY_SWHID},
+        is_miss=False,
+    )
+
+    realised = []
+
+    def fail_if_realised(fod, *, nix_binary, on_log=None):
+        realised.append(fod)
+        raise RuntimeError("realise_fod should not be called")
+
+    monkeypatch.setattr(disarchive_module, "realise_fod", fail_if_realised)
+
+    client = FakeSWHClient()
+    result = try_disarchive(fod, client, cache=cache)
+    assert isinstance(result, SWHCheckResult)
+    assert not realised
+    assert result.known is False
+    assert result.method == SWHLookupMethod.KNOWN_AFTER_DISARCHIVE
+    assert result.swhid == KNOWN_DIRECTORY_SWHID
+
+
+def test_try_disarchive_local_cache_falls_back_to_output_path(monkeypatch, tmp_path):
+    """When the FOD has no hash, the cache key falls back to the output path."""
+    from nix_fod_swh_checker.cache import Cache
+
+    cache = Cache(tmp_path / "cache.json")
+    output_path = "/nix/store/cached-archive.tar.gz"
+    cache.set(
+        f"tool:swh_identify:{output_path}:stripped",
+        {"swhid": KNOWN_DIRECTORY_SWHID},
+        is_miss=False,
+    )
+
+    realised = []
+
+    def fail_if_realised(fod, *, nix_binary, on_log=None):
+        realised.append(fod)
+        raise RuntimeError("realise_fod should not be called")
+
+    monkeypatch.setattr(disarchive_module, "realise_fod", fail_if_realised)
+
+    fod = make_fod(output_path=output_path, hash_algo=None, hash_hex=None)
+    client = FakeSWHClient()
+    result = try_disarchive(fod, client, cache=cache)
+    assert isinstance(result, SWHCheckResult)
+    assert not realised
+    assert result.known is False
+    assert result.method == SWHLookupMethod.KNOWN_AFTER_DISARCHIVE
+    assert result.swhid == KNOWN_DIRECTORY_SWHID
+
+
+def test_try_disarchive_local_cache_uses_hash_not_output_path(monkeypatch, tmp_path):
+    """The cache key is based on the FOD hash, so the same content shares entries."""
+    from nix_fod_swh_checker.cache import Cache
+
+    cache = Cache(tmp_path / "cache.json")
+    # Populate the cache using one output path.
+    first_fod = make_fod(output_path="/nix/store/first-archive.tar.gz")
+    prefix = _default_fod_cache_prefix(first_fod)
+    cache.set(
+        f"tool:swh_identify:{prefix}:stripped",
+        {"swhid": KNOWN_DIRECTORY_SWHID},
+        is_miss=False,
+    )
+
+    realised = []
+
+    def fail_if_realised(fod, *, nix_binary, on_log=None):
+        realised.append(fod)
+        raise RuntimeError("realise_fod should not be called")
+
+    monkeypatch.setattr(disarchive_module, "realise_fod", fail_if_realised)
+
+    # A different FOD with the same hash should reuse the cached stripped SWHID.
+    second_fod = make_fod(output_path="/nix/store/second-archive.tar.gz")
+    client = FakeSWHClient()
+    result = try_disarchive(second_fod, client, cache=cache)
+    assert isinstance(result, SWHCheckResult)
+    assert not realised
+    assert result.known is False
+    assert result.method == SWHLookupMethod.KNOWN_AFTER_DISARCHIVE
+    assert result.swhid == KNOWN_DIRECTORY_SWHID

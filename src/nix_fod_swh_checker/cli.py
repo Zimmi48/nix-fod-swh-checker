@@ -12,6 +12,7 @@ from pathlib import Path
 
 import requests
 
+from .cache import Cache, default_cache_path
 from .checker import check_fod
 from .checkpoint import default_checkpoint_path, load_checkpoint, save_checkpoint
 from .models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
@@ -307,6 +308,19 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="do not read or write a checkpoint file",
     )
+    check_parser.add_argument(
+        "--cache-file",
+        default=None,
+        help=(
+            "path to the shared cache file used to avoid repeated API requests "
+            "and tool runs (default: a file under $XDG_CACHE_HOME/nix-fod-swh-checker/)"
+        ),
+    )
+    check_parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="do not read or write the shared cache",
+    )
     return parser
 
 
@@ -331,6 +345,11 @@ def _validate_args(
             _exit_usage(
                 parser,
                 "--no-checkpoint and --checkpoint-file are mutually exclusive",
+            )
+        if args.no_cache and args.cache_file:
+            _exit_usage(
+                parser,
+                "--no-cache and --cache-file are mutually exclusive",
             )
         if args.no_checkpoint:
             retry_flags = [
@@ -452,6 +471,7 @@ def _run_check_command(args: argparse.Namespace) -> int:
 
     checkpoint_path: Path | None = None
     checked: dict[str, SWHCheckResult] = {}
+    cache: Cache | None = None
 
     try:
         try:
@@ -486,11 +506,25 @@ def _run_check_command(args: argparse.Namespace) -> int:
                 else:
                     on_log(f"saving progress to checkpoint {checkpoint_path}")
 
+        if not args.no_cache:
+            cache_path = (
+                Path(args.cache_file)
+                if args.cache_file
+                else default_cache_path()
+            )
+            cache = Cache(
+                cache_path,
+                ignore_misses=args.retry_unknown or args.retry_undetermined,
+            )
+            if on_log:
+                on_log(f"using shared cache {cache_path}")
+
         with SWHClient(
             api_url=args.swh_api_url,
             api_token=api_token,
             min_delay=args.min_delay,
             on_log=on_log,
+            cache=cache,
         ) as client:
             total = len(fods)
             for index, fod in enumerate(fods, start=1):
@@ -523,6 +557,7 @@ def _run_check_command(args: argparse.Namespace) -> int:
                         disarchive_timeout=args.disarchive_timeout,
                         disarchive_db_url=args.disarchive_db_url,
                         skip_disarchive=args.skip_disarchive,
+                        cache=cache,
                     )
                 except SWHError as exc:
                     print(f"warning: {exc}", file=sys.stderr)
@@ -546,9 +581,12 @@ def _run_check_command(args: argparse.Namespace) -> int:
         if not args.quiet:
             _print_report(results)
 
+        if cache is not None:
+            cache.save()
+
         return 0
     except KeyboardInterrupt:
-        return _handle_interrupt(checked, checkpoint_path)
+        return _handle_interrupt(checked, checkpoint_path, cache)
 
 
 def _run_generate_command(args: argparse.Namespace) -> int:
@@ -1074,7 +1112,9 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _handle_interrupt(
-    checked: dict[str, SWHCheckResult], checkpoint_path: Path | None
+    checked: dict[str, SWHCheckResult],
+    checkpoint_path: Path | None,
+    cache: Cache | None = None,
 ) -> int:
     """Print a clean, traceback-free message when interrupted (e.g. Ctrl+C),
     and return the conventional 128+SIGINT exit code.
@@ -1086,6 +1126,11 @@ def _handle_interrupt(
     if checkpoint_path is not None:
         message += f"; progress was saved to {checkpoint_path}, re-run the same command to resume"
     print(f"{message}.", file=sys.stderr)
+    if cache is not None:
+        try:
+            cache.save()
+        except OSError:
+            pass
     return 130
 
 

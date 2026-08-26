@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from typing import Callable
 
+from .cache import Cache
 from .disarchive import _DISARCHIVE_DB_URL, try_disarchive
 from .models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
 from .nix import NixCommandError, realise_fod
@@ -43,6 +44,7 @@ def check_fod(
     disarchive_timeout: float = 30.0,
     disarchive_db_url: str = _DISARCHIVE_DB_URL,
     skip_disarchive: bool = False,
+    cache: Cache | None = None,
     on_log: Callable[[str], None] | None = None,
 ) -> SWHCheckResult:
     """Check a single FOD against Software Heritage, choosing the most
@@ -60,6 +62,7 @@ def check_fod(
             disarchive_timeout=disarchive_timeout,
             disarchive_db_url=disarchive_db_url,
             skip_disarchive=skip_disarchive,
+            cache=cache,
             on_log=on_log,
         )
 
@@ -75,6 +78,7 @@ def check_fod(
             disarchive_timeout=disarchive_timeout,
             disarchive_db_url=disarchive_db_url,
             skip_disarchive=skip_disarchive,
+            cache=cache,
             on_log=on_log,
         )
 
@@ -90,6 +94,7 @@ def check_fod(
         swh_binary=swh_binary,
         swh_identify_timeout=swh_identify_timeout,
         disarchive_timeout=disarchive_timeout,
+        cache=cache,
         on_log=on_log,
     )
 
@@ -104,6 +109,7 @@ def _check_via_content_hash(
     disarchive_timeout: float = 30.0,
     disarchive_db_url: str = _DISARCHIVE_DB_URL,
     skip_disarchive: bool = False,
+    cache: Cache | None = None,
     on_log: Callable[[str], None] | None = None,
 ) -> SWHCheckResult:
     result = client.lookup_content(fod.hash_algo, fod.hash_hex)
@@ -133,6 +139,7 @@ def _check_via_content_hash(
         disarchive_timeout=disarchive_timeout,
         disarchive_db_url=disarchive_db_url,
         skip_disarchive=skip_disarchive,
+        cache=cache,
         on_log=on_log,
     )
     if disarchive_result is not None:
@@ -164,6 +171,7 @@ def _check_via_swhid(
     disarchive_timeout: float = 30.0,
     disarchive_db_url: str = _DISARCHIVE_DB_URL,
     skip_disarchive: bool = False,
+    cache: Cache | None = None,
     on_log: Callable[[str], None] | None = None,
 ) -> SWHCheckResult:
     # We don't know upfront whether the FOD output is a single file (SWH
@@ -191,6 +199,7 @@ def _check_via_swhid(
         disarchive_timeout=disarchive_timeout,
         disarchive_db_url=disarchive_db_url,
         skip_disarchive=skip_disarchive,
+        cache=cache,
         on_log=on_log,
     )
     if disarchive_result is not None:
@@ -220,8 +229,30 @@ def _check_via_build_and_identify(
     swh_binary: str,
     swh_identify_timeout: float = 30.0,
     disarchive_timeout: float = 30.0,
+    cache: Cache | None = None,
     on_log: Callable[[str], None] | None = None,
 ) -> SWHCheckResult:
+    cache_key_prefix = fod.output_path or ""
+
+    # If the SWHID and its /known status are already cached, skip realisation.
+    if cache is not None and cache_key_prefix:
+        swhid_cached = cache.get(f"tool:swh_identify:{cache_key_prefix}")
+        if swhid_cached is not None:
+            swhid = swhid_cached.get("swhid")
+            if swhid:
+                if on_log:
+                    on_log(f"{fod.label}: using cached SWHID {swhid}")
+                known = client.lookup_known_swhids([swhid]).get(swhid, False)
+                return SWHCheckResult(
+                    fod=fod,
+                    known=known,
+                    method=SWHLookupMethod.BUILD_AND_IDENTIFY,
+                    detail=f"cached SWHID {swhid}",
+                    swhid=swhid,
+                    swh_url=f"{_ARCHIVE_URL}/{swhid}" if known else None,
+                    origin_urls=fod.origin_urls,
+                )
+
     try:
         out_path = realise_fod(fod, nix_binary=nix_binary, on_log=on_log)
     except NixCommandError as exc:
@@ -239,6 +270,8 @@ def _check_via_build_and_identify(
             swh_binary=swh_binary,
             on_log=on_log,
             timeout=swh_identify_timeout,
+            cache=cache,
+            cache_key=cache_key_prefix or out_path,
         )
     except SWHIdentifyError as exc:
         return SWHCheckResult(

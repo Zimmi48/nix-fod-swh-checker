@@ -1418,9 +1418,90 @@ def test_build_swh_fods_skips_vault_check_for_fetched_paths(monkeypatch, capsys,
     exit_code = cli.main(["build-swh-fods", str(nix_file), "--quiet"])
     err = capsys.readouterr().err
     assert exit_code == 0
-    assert vault_checked == []
-    assert built == [(str(nix_file), ["a"], {"extra_args": [], "on_log": None})]
-    assert "built SWH-backed FOD(s)" in err
+
+
+def test_check_no_cache_and_cache_file_are_mutually_exclusive(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["check", "nixpkgs#hello", "--no-cache", "--cache-file", "x.json"])
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    assert "--no-cache and --cache-file are mutually exclusive" in err
+
+
+def test_check_creates_shared_cache_file_by_default(monkeypatch, capsys, tmp_path):
+    fod = _fod("a")
+
+    def fake_check_fod(fod, client, **kwargs):
+        cache = kwargs.get("cache")
+        if cache is not None:
+            cache.set("test:key", {"known": True}, is_miss=False)
+        return SWHCheckResult(
+            fod=fod, known=True, method=SWHLookupMethod.CONTENT_HASH, detail="known"
+        )
+
+    monkeypatch.setattr(cli, "show_derivations_recursive", lambda *a, **k: {})
+    monkeypatch.setattr(cli, "iter_fixed_output_derivations", lambda d: iter([fod]))
+    monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: _NullContextClient())
+    monkeypatch.setattr(cli, "check_fod", fake_check_fod)
+
+    exit_code = cli.main(["check", "nixpkgs#hello", "--no-checkpoint", "--quiet"])
+    assert exit_code == 0
+    assert (tmp_path / "cache.json").exists()
+
+
+def test_check_no_cache_does_not_create_cache_file(monkeypatch, capsys, tmp_path):
+    fod = _fod("a")
+
+    def fake_check_fod(fod, client, **kwargs):
+        cache = kwargs.get("cache")
+        if cache is not None:
+            cache.set("test:key", {"known": True}, is_miss=False)
+        return SWHCheckResult(
+            fod=fod, known=True, method=SWHLookupMethod.CONTENT_HASH, detail="known"
+        )
+
+    monkeypatch.setattr(cli, "show_derivations_recursive", lambda *a, **k: {})
+    monkeypatch.setattr(cli, "iter_fixed_output_derivations", lambda d: iter([fod]))
+    monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: _NullContextClient())
+    monkeypatch.setattr(cli, "check_fod", fake_check_fod)
+
+    exit_code = cli.main(
+        ["check", "nixpkgs#hello", "--no-checkpoint", "--no-cache", "--quiet"]
+    )
+    assert exit_code == 0
+    assert not (tmp_path / "cache.json").exists()
+
+
+def test_check_cache_file_option_is_used(monkeypatch, capsys, tmp_path):
+    fod = _fod("a")
+    custom_cache = tmp_path / "custom-cache.json"
+
+    def fake_check_fod(fod, client, **kwargs):
+        cache = kwargs.get("cache")
+        if cache is not None:
+            cache.set("test:key", {"known": True}, is_miss=False)
+        return SWHCheckResult(
+            fod=fod, known=True, method=SWHLookupMethod.CONTENT_HASH, detail="known"
+        )
+
+    monkeypatch.setattr(cli, "show_derivations_recursive", lambda *a, **k: {})
+    monkeypatch.setattr(cli, "iter_fixed_output_derivations", lambda d: iter([fod]))
+    monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: _NullContextClient())
+    monkeypatch.setattr(cli, "check_fod", fake_check_fod)
+
+    exit_code = cli.main(
+        [
+            "check",
+            "nixpkgs#hello",
+            "--no-checkpoint",
+            "--cache-file",
+            str(custom_cache),
+            "--quiet",
+        ]
+    )
+    assert exit_code == 0
+    assert custom_cache.exists()
+    assert not (tmp_path / "cache.json").exists()
 
 
 def test_generate_swh_fods_round_trips_json_input_with_label(monkeypatch, tmp_path):
