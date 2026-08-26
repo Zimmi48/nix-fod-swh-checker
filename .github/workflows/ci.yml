@@ -76,6 +76,21 @@ jobs:
             --swh-identify-timeout 10 \
             --disarchive-timeout 10
 
+      - name: Re-check FODs reusing the shared cache
+        run: |
+          start=$(date +%s)
+          nix run .#nix-fod-swh-check -- check .#hello \
+            --no-checkpoint \
+            --swh-identify-timeout 10 \
+            --disarchive-timeout 10
+          end=$(date +%s)
+          elapsed=$((end - start))
+          echo "Re-check completed in ${elapsed}s"
+          if [ "$elapsed" -gt 10 ]; then
+            echo "Re-check took too long; cache may not be reused as expected"
+            exit 1
+          fi
+
       - name: Request archiving of unknown FOD origins (dry run)
         run: |
           nix run .#nix-fod-swh-check -- request-archiving \
