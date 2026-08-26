@@ -1,10 +1,24 @@
 # nix-fod-swh-checker
 
-List every [fixed-output derivation](https://nix.dev/manual/nix/stable/language/advanced-attributes#adv-attr-outputHash) (FOD) reachable from a Nix attribute, and check whether each one's source is already archived on [Software Heritage](https://www.softwareheritage.org/) (SWH).
+[Nix](https://nixos.org/) gives you very high level of reproducibility [[1,2,3]](#references), but this only works if you still have the sources of the packages you want to build (and their dependencies) or if you can get them through a binary cache.
+
+The goal of this tool is to enable longer-term preservation, without reliance on binary caches and unstable sources that may disappear, by checking that all the sources that you need, i.e., every [fixed-output derivation](https://nix.dev/manual/nix/stable/language/advanced-attributes#adv-attr-outputHash) (FOD) reachable from a Nix attribute, are archived on [Software Heritage](https://www.softwareheritage.org/) (SWH), the universal archive of public code.
 
 For FODs that are archived, the tool can also generate alternative derivations that download the same content from Software Heritage, allowing a Nix build to succeed even when the original upstream sources are unavailable.
 
 The idea is that this tool can be used when someone (for instance, a researcher who cares about long-term reproducibility of their work) wants to ensure that a Nix build will continue to work in the future even if the sources disappeared and the NixOS cache was wiped (even more relevant when building things that are not in the cache).
+
+This tool would not be possible without the existence of Software Heritage [[4]](#references) and of the `disarchive` [tool](https://ngyro.com/software/disarchive.html) and [database](https://disarchive.guix.gnu.org/) [[5]](#references), which were created in the context of the Guix project.
+
+*Note:* This tool was developed by Théo Zimmermann with extensive use of generative AI. All documentation (and CI) files have been reviewed extensively, but code and tests have not. The tool is usable as is, but it can also be considered as a prototype if someone wishes to produce (and maintain!) a more human-engineered version.
+
+### References
+
+- [1] Julien Malka, Stefano Zacchiroli, and Théo Zimmermann. "Reproducibility of build environments through space and time." Proceedings of the 2024 ACM/IEEE 44th International Conference on Software Engineering: New Ideas and Emerging Results. 2024.
+- [2] Julien Malka, Stefano Zacchiroli, and Théo Zimmermann. "Does Functional Package Management Enable Reproducible Builds at Scale? Yes." 2025 IEEE/ACM 22nd International Conference on Mining Software Repositories (MSR). IEEE, 2025.
+- [3] Julien Malka, Stefano Zacchiroli, and Théo Zimmermann. "A Decade of Software Reproducibility in the Nix Package Ecosystem." (2026).
+- [4] Di Cosmo, Roberto, and Stefano Zacchiroli. "Software heritage: Why and how to preserve software source code." iPRES 2017-14th International Conference on Digital Preservation. 2017.
+- [5] Ludovic Courtès, Timothy Sample, Stefano Zacchiroli, and Simon Tournier. "Source code archiving to the rescue of reproducible deployment." Proceedings of the 2nd ACM Conference on Reproducibility and Replicability. 2024.
 
 ## How it works
 
