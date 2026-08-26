@@ -68,6 +68,8 @@ A Software Heritage API token is strongly recommended. Anonymous requests are he
 
 Progress messages go to stderr; suppress them with `--quiet`/`-q`. Results are checkpointed as they are computed, so an interrupted run can be resumed by re-running the same command. Use `--no-checkpoint` to disable this, or `--checkpoint-file` to choose an explicit location.
 
+A shared cache is also maintained across installables to avoid repeating Software Heritage API requests and expensive tool runs (`swh identify` and `disarchive`). Positive responses and successful tool runs are cached forever; negative API responses are cached for one day and ignored when `--retry-unknown` or `--retry-undetermined` is given. Use `--no-cache` to disable the shared cache, or `--cache-file` to choose an explicit location.
+
 To write machine-readable JSON results to a file in addition to the human-readable report:
 
 ```console

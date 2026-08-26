@@ -34,6 +34,7 @@ from typing import Callable
 
 import requests
 
+from .cache import Cache
 from .models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
 from .nix import NixCommandError, realise_fod
 from .swh import SWHClient
@@ -81,6 +82,7 @@ def try_disarchive(
     disarchive_timeout: float = 30.0,
     disarchive_db_url: str = _DISARCHIVE_DB_URL,
     skip_disarchive: bool = False,
+    cache: Cache | None = None,
     on_log: Callable[[str], None] | None = None,
 ) -> SWHCheckResult | None:
     """Check a FOD's archive contents, using the disarchive database as a cache.
@@ -114,6 +116,7 @@ def try_disarchive(
             fod,
             client,
             db_url=disarchive_db_url,
+            cache=cache,
             on_log=on_log,
         )
     if db_result is not None:
@@ -129,6 +132,7 @@ def try_disarchive(
         disarchive_timeout=disarchive_timeout,
         db_spec=db_spec,
         db_top_dir=db_top_dir,
+        cache=cache,
         on_log=on_log,
     )
 
@@ -139,6 +143,7 @@ def _try_disarchive_database(
     *,
     db_url: str = _DISARCHIVE_DB_URL,
     timeout: float = 20.0,
+    cache: Cache | None = None,
     on_log: Callable[[str], None] | None = None,
 ) -> tuple[SWHCheckResult | None, str | None, str | None]:
     """Query the disarchive database by FOD hash.
@@ -155,6 +160,22 @@ def _try_disarchive_database(
     if not fod.hash_algo or not fod.hash_hex:
         return None, None, None
 
+    cache_key = f"disarchive:db:{fod.hash_algo}:{fod.hash_hex}"
+    if cache is not None:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            if cached.get("missing"):
+                if on_log:
+                    on_log(f"{fod.label}: cached disarchive database miss")
+                return None, None, None
+            spec = cached.get("spec")
+            if spec is not None:
+                if on_log:
+                    on_log(f"{fod.label}: using cached disarchive database spec")
+                return _process_disarchive_spec(
+                    fod, client, spec, on_log=on_log
+                )
+
     url = f"{db_url}/{fod.hash_algo}/{fod.hash_hex}"
     if on_log:
         on_log(f"{fod.label}: checking disarchive database at {url}...")
@@ -169,6 +190,8 @@ def _try_disarchive_database(
     if response.status_code == 404:
         if on_log:
             on_log(f"{fod.label}: not found in disarchive database")
+        if cache is not None:
+            cache.set(cache_key, {"missing": True}, is_miss=True)
         return None, None, None
     if response.status_code != 200:
         if on_log:
@@ -182,13 +205,41 @@ def _try_disarchive_database(
     if not _is_valid_disarchive_spec(spec):
         if on_log:
             on_log(f"{fod.label}: disarchive database returned an invalid spec")
+        if cache is not None:
+            cache.set(cache_key, {"missing": True}, is_miss=True)
+        return None, None, None
+
+    top_dir = _extract_disarchive_top_dir(spec)
+    if cache is not None:
+        cache.set(
+            cache_key,
+            {"spec": spec, "top_dir": top_dir},
+            is_miss=False,
+        )
+
+    return _process_disarchive_spec(fod, client, spec, on_log=on_log)
+
+
+def _process_disarchive_spec(
+    fod: FixedOutputDerivation,
+    client: SWHClient,
+    spec: str,
+    *,
+    on_log: Callable[[str], None] | None = None,
+) -> tuple[SWHCheckResult | None, str | None, str | None]:
+    """Validate a disarchive spec and return a result when its SWHID is known.
+
+    This helper is used both for specs fetched from the disarchive database
+    and for specs read from the shared cache.
+    """
+    if not _is_valid_disarchive_spec(spec):
         return None, None, None
 
     disarchive_swhid = _extract_disarchive_swhid(spec)
     if not disarchive_swhid:
         if on_log:
             on_log(f"{fod.label}: disarchive database spec contains no directory SWHID")
-        return None, spec, None
+        return None, spec, _extract_disarchive_top_dir(spec)
 
     disarchive_known = (
         client.lookup_known_swhids([disarchive_swhid]).get(disarchive_swhid, False)
@@ -226,6 +277,20 @@ def _try_disarchive_database(
     )
 
 
+def _cache_key_prefix(fod: FixedOutputDerivation) -> str:
+    """Return a stable prefix for cache keys tied to this FOD.
+
+    The FOD's content hash is the most stable identifier: two FODs with the
+    same hash refer to the same content, regardless of their output path or
+    derivation path. When the hash is not available we fall back to the
+    declared output path so that caching still works for unusual derivation
+    formats.
+    """
+    if fod.hash_algo and fod.hash_hex:
+        return f"{fod.hash_algo}:{fod.hash_hex}"
+    return fod.output_path or ""
+
+
 def _try_disarchive_local(
     fod: FixedOutputDerivation,
     client: SWHClient,
@@ -237,6 +302,7 @@ def _try_disarchive_local(
     disarchive_timeout: float = 30.0,
     db_spec: str | None = None,
     db_top_dir: str | None = None,
+    cache: Cache | None = None,
     on_log: Callable[[str], None] | None = None,
 ) -> SWHCheckResult | None:
     """Realise a FOD, try to unpack it, and check its directory SWHID locally.
@@ -257,7 +323,28 @@ def _try_disarchive_local(
     ``disarchive disassemble`` is skipped and the provided specification is
     used directly. In that case ``db_top_dir`` is used as ``disarchive_top_dir``
     when it cannot be extracted from ``db_spec``.
+
+    Cache keys are based on the FOD's content hash when it is available, so
+    that a previous run can be reused without realising the FOD again.
     """
+    cache_key_prefix = _cache_key_prefix(fod)
+
+    # If we already know the stripped SWHID and the disarchive spec, we can
+    # rebuild the result without realising or unpacking the archive.
+    cached_result = _try_disarchive_local_from_cache(
+        fod,
+        client,
+        db_spec=db_spec,
+        db_top_dir=db_top_dir,
+        cache=cache,
+        cache_key_prefix=cache_key_prefix,
+        swh_identify_timeout=swh_identify_timeout,
+        disarchive_timeout=disarchive_timeout,
+        on_log=on_log,
+    )
+    if cached_result is not None:
+        return cached_result
+
     try:
         archive_path = realise_fod(fod, nix_binary=nix_binary, on_log=on_log)
     except NixCommandError:
@@ -287,6 +374,8 @@ def _try_disarchive_local(
             swh_binary=swh_binary,
             on_log=on_log,
             timeout=swh_identify_timeout,
+            cache=cache,
+            cache_key=f"{cache_key_prefix or archive_path}:stripped",
         )
     except SWHIdentifyError as exc:
         _cleanup(unpacked_path)
@@ -297,6 +386,16 @@ def _try_disarchive_local(
             known=None,
             method=SWHLookupMethod.UNDETERMINED,
             detail=f"unpacked {archive_path} but could not compute its SWHID: {exc}",
+        )
+
+    # Ensure the stripped SWHID is cached even if compute_swhid did not store
+    # it (for example because cache_key was empty or a different object was
+    # used). This makes the local cache resilient across runs.
+    if cache is not None and cache_key_prefix:
+        cache.set(
+            f"tool:swh_identify:{cache_key_prefix}:stripped",
+            {"swhid": stripped_swhid},
+            is_miss=False,
         )
 
     stripped_known = client.lookup_known_swhids([stripped_swhid]).get(stripped_swhid, False)
@@ -322,6 +421,8 @@ def _try_disarchive_local(
                 disarchive_binary=disarchive_binary,
                 timeout=disarchive_timeout,
                 on_log=on_log,
+                cache=cache,
+                cache_key=f"{cache_key_prefix or archive_path}:disassemble",
             )
         except DisarchiveTimeoutError as exc:
             _cleanup(unpacked_path)
@@ -338,6 +439,9 @@ def _try_disarchive_local(
         except DisarchiveError as exc:
             # Without a disarchive specification we cannot reconstruct the exact
             # original archive, so the result is not usable for a SWH-backed FOD.
+            # Invalid specs are already cached as misses by disassemble_archive;
+            # other failures (missing binary, command errors) are not cached
+            # because they may be environmental.
             _cleanup(unpacked_path)
             if on_log:
                 on_log(f"disarchive failed for {archive_path}: {exc}")
@@ -396,6 +500,124 @@ def _try_disarchive_local(
     )
 
 
+def _try_disarchive_local_from_cache(
+    fod: FixedOutputDerivation,
+    client: SWHClient,
+    *,
+    db_spec: str | None,
+    db_top_dir: str | None,
+    cache: Cache | None,
+    cache_key_prefix: str,
+    swh_identify_timeout: float = 30.0,
+    disarchive_timeout: float = 30.0,
+    on_log: Callable[[str], None] | None,
+) -> SWHCheckResult | None:
+    """Return a result without realising/unpacking if the cache has enough data.
+
+    We need the stripped directory SWHID and a usable disarchive
+    specification. The specification may come from the disarchive database
+    (``db_spec``) or from a previous local ``disarchive disassemble`` run.
+
+    Cached tool timeouts are also honoured: if a previous run timed out with
+    a timeout that is greater than or equal to the current limit, the FOD is
+    reported as ``UNDETERMINED`` without realising it again.
+    """
+    if not cache_key_prefix or cache is None:
+        return None
+
+    stripped_cache_key = f"tool:swh_identify:{cache_key_prefix}:stripped"
+    stripped_cached = cache.get_tool_result(stripped_cache_key, swh_identify_timeout)
+    if stripped_cached is None:
+        return None
+    if stripped_cached.get("timed_out"):
+        if on_log:
+            on_log(
+                f"{fod.label}: cached 'swh identify' timeout, skipping realisation"
+            )
+        return SWHCheckResult(
+            fod=fod,
+            known=None,
+            method=SWHLookupMethod.UNDETERMINED,
+            detail="cached 'swh identify' timeout",
+        )
+    stripped_swhid = stripped_cached.get("swhid")
+    if not stripped_swhid:
+        return None
+
+    if on_log:
+        on_log(f"{fod.label}: using cached stripped SWHID {stripped_swhid}")
+
+    stripped_known = client.lookup_known_swhids([stripped_swhid]).get(stripped_swhid, False)
+    if not stripped_known:
+        return SWHCheckResult(
+            fod=fod,
+            known=False,
+            method=SWHLookupMethod.KNOWN_AFTER_DISARCHIVE,
+            detail=f"cached stripped SWHID {stripped_swhid}; contents not known",
+            swhid=stripped_swhid,
+        )
+
+    if db_spec is not None:
+        spec = db_spec
+        disarchive_top_dir = _extract_disarchive_top_dir(spec) or db_top_dir
+    else:
+        disassemble_cache_key = f"tool:disassemble:{cache_key_prefix}:disassemble"
+        disassemble_cached = cache.get_tool_result(
+            disassemble_cache_key, disarchive_timeout
+        )
+        if disassemble_cached is None:
+            return None
+        if disassemble_cached.get("invalid"):
+            # A previous local disarchive run produced an invalid spec. The
+            # result is undetermined, but we can still report the stripped
+            # SWHID without realising the FOD again.
+            return SWHCheckResult(
+                fod=fod,
+                known=None,
+                method=SWHLookupMethod.UNDETERMINED,
+                detail=f"cached stripped SWHID {stripped_swhid} but disarchive could not capture a usable spec",
+                swhid=stripped_swhid,
+                swh_url=f"{_ARCHIVE_URL}/{stripped_swhid}",
+            )
+        if disassemble_cached.get("timed_out"):
+            return SWHCheckResult(
+                fod=fod,
+                known=None,
+                method=SWHLookupMethod.UNDETERMINED,
+                detail=f"cached stripped SWHID {stripped_swhid} but disarchive timed out before capturing the spec",
+                swhid=stripped_swhid,
+                swh_url=f"{_ARCHIVE_URL}/{stripped_swhid}",
+            )
+        spec = disassemble_cached.get("spec")
+        if not spec:
+            return None
+        if on_log:
+            on_log(f"{fod.label}: using cached disarchive specification")
+        disarchive_top_dir = _extract_disarchive_top_dir(spec)
+
+    disarchive_swhid = _extract_disarchive_swhid(spec)
+    disarchive_known = (
+        client.lookup_known_swhids([disarchive_swhid]).get(disarchive_swhid, False)
+        if disarchive_swhid
+        else False
+    )
+
+    reported_swhid = disarchive_swhid if disarchive_known else stripped_swhid
+    known = stripped_known or disarchive_known
+
+    return SWHCheckResult(
+        fod=fod,
+        known=known,
+        method=SWHLookupMethod.KNOWN_AFTER_DISARCHIVE,
+        detail=f"cached stripped SWHID {stripped_swhid}",
+        swhid=reported_swhid,
+        swh_url=f"{_ARCHIVE_URL}/{reported_swhid}" if known else None,
+        disarchive_spec=spec,
+        disarchive_swhid=disarchive_swhid,
+        disarchive_top_dir=disarchive_top_dir,
+    )
+
+
 def _extract_disarchive_swhid(spec: str) -> str | None:
     """Return the ``swh:1:dir:`` identifier embedded in a disarchive spec.
 
@@ -424,6 +646,8 @@ def disassemble_archive(
     disarchive_binary: str = "disarchive",
     timeout: float = 30.0,
     on_log: Callable[[str], None] | None = None,
+    cache: Cache | None = None,
+    cache_key: str | None = None,
 ) -> str:
     """Run GNU Guix disarchive on an archive and return its specification.
 
@@ -435,6 +659,17 @@ def disassemble_archive(
     indefinitely on some archives. When the timeout is reached the archive
     is treated as if it could not be disassembled.
     """
+    full_cache_key = f"tool:disassemble:{cache_key}" if cache_key else None
+    if cache is not None and full_cache_key is not None:
+        cached = cache.get_tool_result(full_cache_key, timeout)
+        if cached is not None:
+            if cached.get("timed_out"):
+                raise DisarchiveTimeoutError(
+                    f"disarchive disassemble timed out after {cached['timeout']}s "
+                    f"for {archive_path}"
+                )
+            return cached["spec"]
+
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".disarchive", delete=False
     ) as spec_file:
@@ -447,11 +682,25 @@ def disassemble_archive(
         subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=timeout)
         spec = Path(spec_path).read_text()
         if not _is_valid_disarchive_spec(spec):
+            if cache is not None and full_cache_key is not None:
+                cache.set(
+                    full_cache_key,
+                    {"invalid": True, "timeout": timeout},
+                    is_miss=True,
+                )
             raise DisarchiveError(
                 f"disarchive produced an invalid spec for {archive_path}"
             )
+        if cache is not None and full_cache_key is not None:
+            cache.set(full_cache_key, {"spec": spec, "timeout": timeout}, is_miss=False)
         return spec
     except subprocess.TimeoutExpired as exc:
+        if cache is not None and full_cache_key is not None:
+            cache.set(
+                full_cache_key,
+                {"timed_out": True, "timeout": timeout},
+                is_miss=True,
+            )
         raise DisarchiveTimeoutError(
             f"disarchive disassemble timed out after {timeout}s for {archive_path}"
         ) from exc

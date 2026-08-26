@@ -152,6 +152,34 @@ def test_check_fod_nar_method_unknown_swhid(monkeypatch, tmp_path):
     assert result.swh_url is None
 
 
+def test_check_fod_nar_method_uses_cache_to_skip_realisation(monkeypatch, tmp_path):
+    from nix_fod_swh_checker.cache import Cache
+
+    output_path = "/nix/store/cached-output"
+    swhid = "swh:1:dir:" + "b" * 40
+    cache = Cache(tmp_path / "cache.json")
+    cache.set(f"tool:swh_identify:{output_path}", {"swhid": swhid}, is_miss=False)
+
+    realised = []
+
+    def fail_if_realised(fod, *, nix_binary, on_log=None):
+        realised.append(fod)
+        raise RuntimeError("realise_fod should not be called")
+
+    monkeypatch.setattr(checker_module, "realise_fod", fail_if_realised)
+
+    fod = make_fod(
+        method="nar", hash_algo="sha256", hash_hex="e" * 64, output_path=output_path
+    )
+    client = FakeSWHClient(known_swhids={swhid: True})
+    result = check_fod(fod, client, cache=cache)
+    assert not realised
+    assert result.known is True
+    assert result.method == SWHLookupMethod.BUILD_AND_IDENTIFY
+    assert result.swhid == swhid
+    assert result.swh_url == f"https://archive.softwareheritage.org/{swhid}"
+
+
 def test_check_fod_flat_realise_failure_is_undetermined(monkeypatch):
     fod = make_fod(method="flat", hash_algo="sha256", hash_hex="3" * 64)
 

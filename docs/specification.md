@@ -61,6 +61,8 @@ If the checkpoint already contains results for some FODs, those FODs are skipped
 | `-q`, `--quiet` | false | Suppress stderr progress messages and the human-readable report. Warnings and errors are still printed. |
 | `--checkpoint-file` `<path>` | per-installable cache file | Read from and write to the given checkpoint file. See [Checkpoint file](#checkpoint-file). |
 | `--no-checkpoint` | false | Do not read or write a checkpoint file. |
+| `--cache-file` `<path>` | shared cache file | Read from and write to the given shared cache file. See [Shared cache](#shared-cache). |
+| `--no-cache` | false | Do not read or write the shared cache. |
 | `--swh-api-url` `<url>` | `https://archive.softwareheritage.org/api/1` | Base URL of the Software Heritage API. |
 | `--swh-api-token` `<token>` | value of `SWH_API_TOKEN` | Bearer token for authenticated Software Heritage API requests. |
 | `--min-delay` `<seconds>` | `1.0` | Minimum delay between anonymous Software Heritage API requests. No delay is inserted when authenticated. |
@@ -72,6 +74,7 @@ If the checkpoint already contains results for some FODs, those FODs are skipped
 Incompatible option combinations are rejected with exit code `2`:
 
 - `--no-checkpoint` cannot be combined with `--checkpoint-file`.
+- `--no-cache` cannot be combined with `--cache-file`.
 - `--retry-unknown` and `--retry-undetermined` require a checkpoint, so they cannot be combined with `--no-checkpoint`.
 
 #### `check` human-readable report
@@ -353,6 +356,89 @@ Each result object in `results` has the same fields as a JSON output result obje
 
 ---
 
+## Shared cache
+
+In addition to the per-installable checkpoint, `check` maintains a shared cache that avoids repeating expensive work across attributes. The cache is independent of checkpoints: it is used even when `--no-checkpoint` is given, and it is shared across all installables by default.
+
+### Default location
+
+The default shared cache path is:
+
+```
+$XDG_CACHE_HOME/nix-fod-swh-checker/cache.json
+```
+
+If `XDG_CACHE_HOME` is unset, `$HOME/.cache` is used.
+
+### Cached data
+
+The cache stores three kinds of entries:
+
+1. **Positive API responses** — cached forever:
+   - Software Heritage `/content/{algo}:{hash}/` lookups that return `200`.
+   - Software Heritage `/known/` lookups where the SWHID is known.
+   - GNU Guix disarchive database lookups that return a usable specification.
+2. **Negative API responses** — cached for one day:
+   - Software Heritage `/content/` lookups that return `404`.
+   - Software Heritage `/known/` lookups where the SWHID is not known.
+   - Disarchive database lookups that return `404` or an invalid/unusable specification.
+3. **Completed tool runs** — cached forever:
+   - Successful `swh identify` invocations.
+   - Successful `disarchive disassemble` invocations.
+4. **Timed-out tool runs** — cached for one day:
+   - `swh identify` invocations that exceed `--swh-identify-timeout`.
+   - `disarchive disassemble` invocations that exceed `--disarchive-timeout`.
+5. **Failed tool runs** — cached for one day, when the failure is specific to the content:
+   - `disarchive disassemble` invocations that return an invalid/unusable specification (for example, `(disarchive (version 0) #f)`).
+
+Other tool failures, such as a missing executable or a non-zero exit code that is not caused by the content itself, are **not** cached because they may be environmental and could succeed on a different machine or after fixing the environment.
+
+Timed-out tool runs store the timeout limit that was in effect. If the same
+content is checked again with a **higher** timeout, the cached timeout is
+ignored and the tool is re-run. With an **equal or lower** timeout, the cached
+miss is reused so the hanging tool is not invoked again. This makes increasing
+the timeout enough to retry a previously timed-out check, even without
+`--retry-undetermined`.
+
+Tool-run results are keyed by the FOD's content hash (`<hash_algo>:<hash_hex>`)
+when it is available, so a previous `swh identify` or `disarchive disassemble`
+result can be reused without realising the FOD again. Two FODs that declare the
+same hash refer to the same content, so they share the same cached tool output.
+
+### Retry behavior
+
+When `--retry-unknown` or `--retry-undetermined` is given, cached negative API responses, timed-out tool runs, and failed tool runs are ignored and the corresponding work is retried. Positive responses and completed tool runs are still reused.
+
+Even without `--retry-undetermined`, a timed-out tool run is automatically
+retried when the same content is checked with a higher `--swh-identify-timeout`
+or `--disarchive-timeout` value, because the cached timeout miss is only reused
+when the current timeout is less than or equal to the stored one.
+
+### Format
+
+The cache file is a JSON document:
+
+```json
+{
+  "version": 1,
+  "entries": {
+    "<cache-key>": {
+      "kind": "hit",
+      "value": { ... }
+    },
+    "<cache-key>": {
+      "kind": "miss",
+      "value": { ... },
+      "created": 1234567890.0
+    }
+  }
+}
+```
+
+`hit` entries are kept indefinitely; `miss` entries expire after one day. The exact cache keys are an implementation detail.
+
+---
+
 ## FOD object
 
 Both the `check` JSON output and checkpoint files describe each checked FOD with the same object structure:
@@ -404,5 +490,5 @@ Software Heritage rate-limits anonymous API requests. The client behaves as foll
 | Variable | Used by | Description |
 |----------|---------|-------------|
 | `SWH_API_TOKEN` | all subcommands that talk to SWH | Default bearer token for Software Heritage API requests. Overridden by `--swh-api-token`. |
-| `XDG_CACHE_HOME` | `check`, `generate-swh-fods`, `cook-swh-fods`, `build-swh-fods`, `request-archiving` | Base directory for the default checkpoint file. |
-| `HOME` | checkpoint code | Fallback for `XDG_CACHE_HOME`. |
+| `XDG_CACHE_HOME` | `check`, `generate-swh-fods`, `cook-swh-fods`, `build-swh-fods`, `request-archiving` | Base directory for the default checkpoint file and the shared cache. |
+| `HOME` | checkpoint/cache code | Fallback for `XDG_CACHE_HOME`. |

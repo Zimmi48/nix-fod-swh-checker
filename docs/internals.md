@@ -16,6 +16,7 @@ The tool is structured as a small Python package with the following modules:
 | `disarchive.py` | Unpack archives and capture GNU Guix `disarchive` specifications. |
 | `swh_fod.py` | Generate Nix expressions for SWH-backed FODs. |
 | `checkpoint.py` | Save and resume in-progress results. |
+| `cache.py` | Shared cache for API responses and expensive tool runs. |
 | `models.py` | Shared data classes and enumerations. |
 
 ## Data models
@@ -228,6 +229,50 @@ Skipped FODs and failed save requests are reported as warnings on stderr; the co
 3. Rename the temporary file to the final path with `os.replace`.
 
 Loading tolerates missing or malformed files by returning an empty dictionary.
+
+## Shared cache
+
+`cache.py` implements a file-backed cache that is shared across installables. It is independent of the per-installable checkpoint and is enabled by default for the `check` subcommand.
+
+The cache stores:
+
+- Positive API responses forever: SWH `/content/` hits, SWH `/known/` hits, and disarchive database specs.
+- Negative API responses for one day: SWH `/content/` misses, SWH `/known/` misses, and disarchive database lookups that return no usable spec.
+- Failed tool runs for one day, when the failure is specific to the content:
+  - `disarchive disassemble` runs that produce an invalid spec.
+  - `swh identify` and `disarchive disassemble` runs that time out.
+- Environmental tool failures (missing executable, non-zero exit code not caused by the content) are not cached.
+- Successful tool runs forever: `swh identify` outputs and `disarchive disassemble` outputs.
+
+Tool timeout misses carry the timeout limit that was in effect when the run
+failed. If the same content is checked again with a higher timeout, the cached
+miss is ignored and the tool is re-run. With an equal or lower timeout, the
+cached miss is reused so the slow hanging tool is not invoked again. This
+invalidation is independent of the one-day TTL, so increasing the timeout is
+enough to retry a previously timed-out check even when `--retry-undetermined`
+is not given.
+
+Cache keys are prefixed by category (for example `swh:content:`, `swh:known:`, `disarchive:db:`, `tool:swh_identify:`, `tool:disassemble:`). Negative entries carry a `created` timestamp and are ignored when their TTL expires or when the user passes `--retry-unknown` / `--retry-undetermined`.
+
+The cache is wired into:
+
+- `swh.py:SWHClient.lookup_content` and `lookup_known_swhids`.
+- `disarchive.py:_try_disarchive_database` and `disassemble_archive`.
+- `swhid.py:compute_swhid`.
+- `checker.py` and `cli.py`, which create a `Cache` instance and pass it through the call chain.
+
+Tool-run caches (`swh identify` and `disarchive disassemble`) are keyed by the
+FOD's content hash (`<hash_algo>:<hash_hex>`) when available. This is the most
+stable identifier for the content: two FODs with the same hash refer to the
+same content, so the cached `swh identify` output or `disarchive disassemble`
+specification can be reused regardless of their derivation path or output
+path. It also lets `_check_via_build_and_identify` and `_try_disarchive_local`
+skip `nix build` realisation entirely when the previous run's tool output is
+already cached. When the FOD has no hash in its metadata, the declared output
+store path is used as a fallback key, and if that is also missing the realised
+store path is used.
+
+Like the checkpoint file, the cache is written atomically and loading tolerates malformed files.
 
 ## Progress logging
 

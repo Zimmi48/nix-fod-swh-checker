@@ -61,6 +61,86 @@ def test_compute_swhid_timeout(monkeypatch):
         compute_swhid("/nix/store/x", timeout=1.0)
 
 
+def test_compute_swhid_caches_timeout_and_reuses_it(monkeypatch, tmp_path):
+    from nix_fod_swh_checker.cache import Cache
+
+    calls = []
+
+    def fake_run(cmd, check, capture_output, text, timeout):
+        calls.append(timeout)
+        raise subprocess.TimeoutExpired(cmd, timeout)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    cache = Cache(tmp_path / "cache.json")
+
+    with pytest.raises(SWHIdentifyError, match="timed out after 1.0s"):
+        compute_swhid("/nix/store/x", timeout=1.0, cache=cache, cache_key="k")
+    assert len(calls) == 1
+
+    cache.save()
+    cache2 = Cache(tmp_path / "cache.json")
+    # A lower timeout reuses the cached timeout miss.
+    with pytest.raises(SWHIdentifyError, match="timed out after 1.0s"):
+        compute_swhid("/nix/store/x", timeout=0.5, cache=cache2, cache_key="k")
+    assert len(calls) == 1
+
+    # An equal timeout also reuses the cached timeout miss.
+    with pytest.raises(SWHIdentifyError, match="timed out after 1.0s"):
+        compute_swhid("/nix/store/x", timeout=1.0, cache=cache2, cache_key="k")
+    assert len(calls) == 1
+
+
+def test_compute_swhid_ignores_cached_timeout_when_timeout_increased(monkeypatch, tmp_path):
+    from nix_fod_swh_checker.cache import Cache
+
+    calls = []
+
+    def fake_run(cmd, check, capture_output, text, timeout):
+        calls.append(timeout)
+        if timeout <= 1.0:
+            raise subprocess.TimeoutExpired(cmd, timeout)
+        return subprocess.CompletedProcess(cmd, 0, stdout=f"{KNOWN_CONTENT_SWHID}\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    cache = Cache(tmp_path / "cache.json")
+
+    with pytest.raises(SWHIdentifyError, match="timed out after 1.0s"):
+        compute_swhid("/nix/store/x", timeout=1.0, cache=cache, cache_key="k")
+    assert len(calls) == 1
+
+    cache.save()
+    cache2 = Cache(tmp_path / "cache.json")
+    result = compute_swhid("/nix/store/x", timeout=2.0, cache=cache2, cache_key="k")
+    assert result == KNOWN_CONTENT_SWHID
+    assert len(calls) == 2
+
+
+def test_compute_swhid_retry_flags_ignore_cached_timeout(monkeypatch, tmp_path):
+    from nix_fod_swh_checker.cache import Cache
+
+    calls = []
+
+    def fake_run(cmd, check, capture_output, text, timeout):
+        calls.append(timeout)
+        # First call times out; subsequent calls (retry) succeed.
+        if len(calls) == 1:
+            raise subprocess.TimeoutExpired(cmd, timeout)
+        return subprocess.CompletedProcess(cmd, 0, stdout=f"{KNOWN_CONTENT_SWHID}\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    cache = Cache(tmp_path / "cache.json")
+
+    with pytest.raises(SWHIdentifyError, match="timed out after 1.0s"):
+        compute_swhid("/nix/store/x", timeout=1.0, cache=cache, cache_key="k")
+    assert len(calls) == 1
+
+    cache.save()
+    cache2 = Cache(tmp_path / "cache.json", ignore_misses=True)
+    result = compute_swhid("/nix/store/x", timeout=0.5, cache=cache2, cache_key="k")
+    assert result == KNOWN_CONTENT_SWHID
+    assert len(calls) == 2
+
+
 def test_compute_swhid_invokes_configured_binary(tmp_path, monkeypatch):
     """The wrapper passes ``swh_binary`` through to the subprocess unchanged."""
     recorded = []

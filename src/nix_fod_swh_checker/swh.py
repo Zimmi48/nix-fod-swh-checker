@@ -13,6 +13,8 @@ from typing import Callable, Iterable
 
 import requests
 
+from .cache import Cache
+
 DEFAULT_API_URL = "https://archive.softwareheritage.org/api/1"
 
 # Hash algorithms accepted by the SWH `content` lookup endpoint (raw content
@@ -72,12 +74,14 @@ class SWHClient:
         max_retries: int = 3,
         min_delay: float = 1.0,
         on_log: Callable[[str], None] | None = None,
+        cache: Cache | None = None,
     ) -> None:
         self.api_url = api_url.rstrip("/")
         self.timeout = timeout
         self.max_retries = max_retries
         self.min_delay = min_delay
         self.on_log = on_log
+        self.cache = cache
         self._last_request_time = 0.0
 
         self.session = requests.Session()
@@ -174,11 +178,25 @@ class SWHClient:
         """
         if algo not in CONTENT_LOOKUP_ALGOS:
             raise ValueError(f"unsupported content lookup algorithm: {algo}")
+
+        cache_key = f"swh:content:{algo}:{hash_hex}"
+        if self.cache is not None:
+            cached = self.cache.get(cache_key)
+            if cached is not None:
+                return ContentLookupResult(
+                    known=cached["known"], raw=cached.get("raw")
+                )
+
         response = self._request("GET", f"/content/{algo}:{hash_hex}/")
         if response.status_code == 404:
+            if self.cache is not None:
+                self.cache.set(cache_key, {"known": False}, is_miss=True)
             return ContentLookupResult(known=False)
         if response.status_code == 200:
-            return ContentLookupResult(known=True, raw=response.json())
+            raw = response.json()
+            if self.cache is not None:
+                self.cache.set(cache_key, {"known": True, "raw": raw}, is_miss=False)
+            return ContentLookupResult(known=True, raw=raw)
         raise SWHError(
             f"unexpected status {response.status_code} looking up content {algo}:{hash_hex}"
         )
@@ -191,11 +209,34 @@ class SWHClient:
         swhids = list(swhids)
         if not swhids:
             return {}
-        response = self._request("POST", "/known/", json=swhids)
+
+        result: dict[str, bool] = {}
+        missing: list[str] = []
+        if self.cache is not None:
+            for swhid in swhids:
+                cached = self.cache.get(f"swh:known:{swhid}")
+                if cached is not None:
+                    result[swhid] = cached["known"]
+                else:
+                    missing.append(swhid)
+        else:
+            missing = swhids
+
+        if not missing:
+            return result
+
+        response = self._request("POST", "/known/", json=missing)
         if response.status_code != 200:
             raise SWHError(f"unexpected status {response.status_code} calling /known/")
         data = response.json()
-        return {swhid: bool(info.get("known")) for swhid, info in data.items()}
+        for swhid in missing:
+            known = bool(data.get(swhid, {}).get("known"))
+            result[swhid] = known
+            if self.cache is not None:
+                self.cache.set(
+                    f"swh:known:{swhid}", {"known": known}, is_miss=not known
+                )
+        return result
 
     def cook_vault_flat(self, swhid: str) -> VaultCookingTask:
         """Request the cooking of a vault flat archive for ``swhid``.
