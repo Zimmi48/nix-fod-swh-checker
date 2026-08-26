@@ -1800,6 +1800,194 @@ def test_check_no_checkpoint_and_checkpoint_file_are_incompatible(capsys):
     assert "mutually exclusive" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    "url,expected",
+    [
+        ("https://example.com/archive.tar.gz", True),
+        ("https://example.com/archive.tar.bz2", True),
+        ("https://example.com/archive.tar.xz", True),
+        ("https://example.com/archive.tar", True),
+        ("https://example.com/archive.tgz", True),
+        ("https://example.com/archive.zip", True),
+        ("https://example.com/archive.jar", True),
+        ("https://example.com/archive.7z", True),
+        ("https://example.com/archive.TAR.GZ", True),
+        ("https://example.com/archive.tar.gz?foo=bar", True),
+        ("https://example.com/archive.tar.gz#fragment", True),
+        ("https://example.com/patch.patch", False),
+        ("https://example.com/Makefile.mk", False),
+        ("https://example.com/config.sub?id=948ae97", False),
+        ("https://example.com/archive.gz", False),
+        ("https://example.com/archive", False),
+        ("https://example.com/archive.tar.gz.extra", False),
+    ],
+)
+def test_looks_like_tarball_url(url, expected):
+    assert cli._looks_like_tarball_url(url) is expected
+
+
+def test_visit_type_for_result_git_method_ignores_url():
+    fod = FixedOutputDerivation(
+        drv_path="/nix/store/git.drv",
+        output_name="out",
+        output_path="/nix/store/git-out",
+        name="git",
+        method="git",
+        hash_algo="sha1",
+        hash_hex="a" * 40,
+        origin_urls=["https://example.com/patch.patch"],
+    )
+    result = SWHCheckResult(
+        fod=fod,
+        known=False,
+        method=SWHLookupMethod.SWHID_KNOWN,
+        detail="not known",
+        origin_urls=fod.origin_urls,
+    )
+    assert cli._visit_type_for_result(result, fod.origin_urls[0]) == "git"
+
+
+def test_visit_type_for_result_tarball_url():
+    fod = _fod("a")
+    fod.origin_urls = ["https://example.com/archive.tar.gz"]
+    result = SWHCheckResult(
+        fod=fod,
+        known=False,
+        method=SWHLookupMethod.CONTENT_HASH,
+        detail="not known",
+        origin_urls=fod.origin_urls,
+    )
+    assert cli._visit_type_for_result(result, fod.origin_urls[0]) == "tarball"
+
+
+def test_visit_type_for_result_file_url_returns_none():
+    fod = _fod("a")
+    fod.origin_urls = ["https://example.com/patch.patch"]
+    result = SWHCheckResult(
+        fod=fod,
+        known=False,
+        method=SWHLookupMethod.CONTENT_HASH,
+        detail="not known",
+        origin_urls=fod.origin_urls,
+    )
+    assert cli._visit_type_for_result(result, fod.origin_urls[0]) is None
+
+
+def test_request_archiving_dry_run_skips_file_urls(capsys, tmp_path):
+    fod_tarball = _fod("tarball")
+    fod_tarball.origin_urls = ["https://example.com/archive.tar.gz"]
+    fod_file = _fod("file")
+    fod_file.origin_urls = ["https://example.com/fix.patch"]
+    fod_file_with_query = _fod("file-query")
+    fod_file_with_query.origin_urls = [
+        "https://cgit.git.savannah.gnu.org/cgit/config.git/plain/config.sub?id=948ae97"
+    ]
+
+    checkpoint = tmp_path / "ckpt.json"
+    from nix_fod_swh_checker.checkpoint import save_checkpoint
+
+    save_checkpoint(
+        checkpoint,
+        "nixpkgs#hello",
+        {
+            fod_tarball.label: SWHCheckResult(
+                fod=fod_tarball,
+                known=False,
+                method=SWHLookupMethod.CONTENT_HASH,
+                detail="not known",
+                origin_urls=fod_tarball.origin_urls,
+            ),
+            fod_file.label: SWHCheckResult(
+                fod=fod_file,
+                known=False,
+                method=SWHLookupMethod.CONTENT_HASH,
+                detail="not known",
+                origin_urls=fod_file.origin_urls,
+            ),
+            fod_file_with_query.label: SWHCheckResult(
+                fod=fod_file_with_query,
+                known=False,
+                method=SWHLookupMethod.CONTENT_HASH,
+                detail="not known",
+                origin_urls=fod_file_with_query.origin_urls,
+            ),
+        },
+    )
+
+    exit_code = cli.main(
+        [
+            "request-archiving",
+            "nixpkgs#hello",
+            "--checkpoint-file",
+            str(checkpoint),
+            "--dry-run",
+        ]
+    )
+    captured = capsys.readouterr()
+    out = captured.out
+    err = captured.err
+    assert exit_code == 0
+    assert "https://example.com/archive.tar.gz (tarball)" in out
+    assert "https://example.com/fix.patch" not in out
+    assert "https://cgit.git.savannah.gnu.org/cgit/config.git/plain/config.sub" not in out
+    assert "file URL not supported for archiving" in err
+
+
+def test_request_archiving_skips_live_file_urls(monkeypatch, capsys, tmp_path):
+    fod = _fod("a")
+    fod.origin_urls = ["https://example.com/fix.patch"]
+    checkpoint = tmp_path / "ckpt.json"
+    from nix_fod_swh_checker.checkpoint import save_checkpoint
+
+    save_checkpoint(
+        checkpoint,
+        "nixpkgs#hello",
+        {
+            fod.label: SWHCheckResult(
+                fod=fod,
+                known=False,
+                method=SWHLookupMethod.CONTENT_HASH,
+                detail="not known",
+                origin_urls=fod.origin_urls,
+            ),
+        },
+    )
+
+    requested = []
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+        def request_origin_save(self, origin_url, *, visit_type="tarball"):
+            requested.append((origin_url, visit_type))
+            return type(
+                "SaveRequest",
+                (),
+                {
+                    "id": 123,
+                    "origin_url": origin_url,
+                    "visit_type": visit_type,
+                    "save_request_status": "accepted",
+                    "save_task_status": "pending",
+                },
+            )()
+
+    monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: FakeClient())
+    monkeypatch.setattr(cli, "_first_live_url", lambda urls, **kwargs: urls[0])
+
+    exit_code = cli.main(
+        ["request-archiving", "nixpkgs#hello", "--checkpoint-file", str(checkpoint), "--quiet"]
+    )
+    err = capsys.readouterr().err
+    assert exit_code == 0
+    assert requested == []
+    assert "file URL not supported for archiving" in err
+
+
 def test_check_retry_unknown_requires_checkpoint(capsys):
     with pytest.raises(SystemExit) as exc_info:
         cli.main(["check", "nixpkgs#hello", "--retry-unknown", "--no-checkpoint"])

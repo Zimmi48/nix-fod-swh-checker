@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.parse
 from dataclasses import asdict
 from pathlib import Path
 
@@ -707,16 +708,58 @@ def _swh_client_from_args(args: argparse.Namespace, on_log) -> SWHClient:
     )
 
 
-def _visit_type_for_result(result: SWHCheckResult) -> str:
-    """Infer the Software Heritage visit type for a FOD's origin URLs.
+# Archive-like extensions that SWH's ``tarball`` visit type can handle.
+# The path component of the URL (query strings and fragments ignored) must
+# end with one of these suffixes for the origin to be requested as a tarball.
+_TARBALL_EXTENSIONS = frozenset(
+    {
+        ".tar",
+        ".tar.gz",
+        ".tar.bz2",
+        ".tar.xz",
+        ".tar.lz",
+        ".tar.zst",
+        ".tar.lzma",
+        ".tgz",
+        ".tbz",
+        ".tbz2",
+        ".txz",
+        ".tlz",
+        ".tzst",
+        ".zip",
+        ".jar",
+        ".war",
+        ".ear",
+        ".7z",
+        ".rar",
+    }
+)
 
-    ``git``-method FODs are assumed to come from a version-control origin;
-    everything else (``flat`` file downloads, ``nar`` archives, etc.) is
-    treated as a tarball download.
+
+def _looks_like_tarball_url(url: str) -> bool:
+    """Return True when ``url`` points at an archive-like file.
+
+    Query strings and fragments are ignored, and the comparison is
+    case-insensitive so that extensions such as ``.TAR.GZ`` are accepted.
+    """
+    path = urllib.parse.urlparse(url).path
+    lower_path = path.lower()
+    return any(lower_path.endswith(ext) for ext in _TARBALL_EXTENSIONS)
+
+
+def _visit_type_for_result(result: SWHCheckResult, url: str) -> str | None:
+    """Infer the Software Heritage visit type for a FOD's origin URL.
+
+    ``git``-method FODs are assumed to come from a version-control origin.
+    For other methods the URL path is inspected: archive-like URLs are
+    requested as ``tarball``, while plain file URLs (e.g. ``.patch`` or
+    ``.mk`` files) are skipped because SWH has no ``file`` visit type.
     """
     if result.fod.method == "git":
         return "git"
-    return "tarball"
+    if _looks_like_tarball_url(url):
+        return "tarball"
+    return None
 
 
 def _first_live_url(
@@ -858,16 +901,31 @@ def _run_request_archiving_command(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             continue
-        visit_type = _visit_type_for_result(result)
         if args.dry_run:
             # In dry-run mode we do not probe URLs, we just list candidates.
             for url in result.origin_urls:
+                visit_type = _visit_type_for_result(result, url)
+                if visit_type is None:
+                    print(
+                        f"warning: skipping {result.fod.label}: "
+                        f"file URL not supported for archiving: {url}",
+                        file=sys.stderr,
+                    )
+                    continue
                 origins.setdefault((visit_type, url), []).append(result)
             continue
         url = _first_live_url(result.origin_urls, on_log=on_log)
         if url is None:
             print(
                 f"warning: skipping {result.fod.label}: no reachable origin URL",
+                file=sys.stderr,
+            )
+            continue
+        visit_type = _visit_type_for_result(result, url)
+        if visit_type is None:
+            print(
+                f"warning: skipping {result.fod.label}: "
+                f"file URL not supported for archiving: {url}",
                 file=sys.stderr,
             )
             continue

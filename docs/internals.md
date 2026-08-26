@@ -197,7 +197,10 @@ The repository contains a checked-in empty derivation at `nix/cache-warmer.nix`.
 3. For each result, look at `origin_urls`:
    - If the list is empty, warn that the FOD is being skipped and continue.
    - Otherwise, probe each URL with a `HEAD` request in order and keep the first one that responds. A response is considered live when its status is `< 400` or `405`; redirects are followed. If none respond, warn that the FOD is being skipped and continue.
-4. Infer a visit type for each remaining result: `git` when `fod.method == "git"`, otherwise `tarball`.
+4. Infer a visit type for each remaining result:
+   - `git` when `fod.method == "git"`;
+   - `tarball` when `fod.method != "git"` and the URL path looks like an archive (ending with a known archive extension such as `.tar.gz`, `.tgz`, `.zip`, `.7z`, etc., ignoring query strings, fragments, and case);
+   - skipped with a warning otherwise, because SWH has no `file` visit type for plain file URLs such as `.patch` or `.mk` files.
 5. Deduplicate `(visit_type, url)` pairs.
 6. For each pair, call `SWHClient.request_origin_save`.
 7. Print the save request status and identifier for each submitted origin.

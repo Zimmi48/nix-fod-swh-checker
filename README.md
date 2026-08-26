@@ -100,9 +100,9 @@ For FODs that are not yet archived on Software Heritage, you can ask SWH to arch
 nix run .#nix-fod-swh-check -- request-archiving nixpkgs#hello
 ```
 
-The command reads the checkpoint produced by `check` and considers each unknown FOD. For FODs that declare `url`/`urls` in their derivation environment, it probes each URL with a `HEAD` request and keeps the first one that responds. This handles mirror lists while avoiding save requests for dead origins. The visit type is inferred from the FOD method (`git` for git-hashed FODs, `tarball` otherwise). Use `--dry-run` to preview the origins that would be requested.
+The command reads the checkpoint produced by `check` and considers each unknown FOD. For FODs that declare `url`/`urls` in their derivation environment, it probes each URL with a `HEAD` request and keeps the first one that responds. This handles mirror lists while avoiding save requests for dead origins. The visit type is inferred from the FOD method (`git` for git-hashed FODs) and the URL path (`tarball` for archive-like URLs such as `.tar.gz`, `.tgz`, `.zip`, etc.). Plain file URLs (e.g. `.patch` or other plain-text files) are skipped because SWH has no `file` visit type. Use `--dry-run` to preview the origins that would be requested.
 
-FODs with no usable URL, or whose URLs are all unreachable, are skipped with a warning. FODs produced by complex build steps typically fall into this category.
+FODs with no usable URL, whose URLs are all unreachable, or whose URLs do not look like archives or git repositories, are skipped with a warning. FODs produced by complex build steps typically fall into this category.
 
 After requesting archiving and giving some time for the archiving to complete, you may re-run `check --retry-unknown` to check whether the previously unknown FODs are now available in Software Heritage.
 

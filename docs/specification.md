@@ -149,15 +149,18 @@ The command reads results from either:
 
 For every result whose `known` field is not `true` and which declares at least one [origin URL](#origin-urls), the command tries to pick a single reachable origin URL and sends a save request to Software Heritage. Each URL is probed with a `HEAD` request in order, and the first one that responds successfully is kept. If none of the URLs respond, the FOD is skipped with a warning.
 
-The visit type is inferred from the FOD's `method`:
+The visit type is inferred from the FOD's `method` and the URL path:
 
 - `git` → `git`
-- `flat`, `nar`, or any other method → `tarball`
+- `flat`, `nar`, or any other method with an archive-like URL path → `tarball`
+- any other URL → skipped (SWH has no `file` visit type)
+
+A URL path is considered archive-like when it ends with a known archive extension, ignoring query strings, fragments, and case. Recognized extensions include `.tar`, `.tar.gz`, `.tar.bz2`, `.tar.xz`, `.tar.lz`, `.tar.zst`, `.tar.lzma`, `.tgz`, `.tbz`, `.tbz2`, `.txz`, `.tlz`, `.tzst`, `.zip`, `.jar`, `.war`, `.ear`, `.7z`, and `.rar`.
 
 Use `--dry-run` to list the origins that would be requested without contacting Software Heritage. In dry-run mode the origin URLs are not probed.
 
 Origins are deduplicated by `(visit_type, url)` before any request is sent. If a request fails (for example because the origin is blocked), a warning is printed and the command continues with the remaining origins.
-FODs that are skipped are reported with a warning on stderr: either because they have no `origin_urls`, or because none of their URLs are reachable.
+FODs that are skipped are reported with a warning on stderr: because they have no `origin_urls`, because none of their URLs are reachable, or because their URL does not look like an archive (or git repository) and SWH has no `file` visit type.
 
 #### `request-archiving` options
 
