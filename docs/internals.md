@@ -105,9 +105,11 @@ The resulting store path is passed to `swh identify --no-filename <path>` to com
 
 When a `git` or `flat` FOD is not directly known, `disarchive.py:try_disarchive` first queries the GNU Guix disarchive database as a fast cache, then falls back to realising the FOD locally. The database lookup can be disabled with the `--skip-disarchive` command-line option, in which case the local path is used immediately.
 
-The database lookup (`_try_disarchive_database`) sends a `GET` request to `<disarchive-db-url>/<hash_algo>/<hash_hex>`. The FOD must have both a hash algorithm and a hash value; otherwise the lookup is skipped and the local path is used. On HTTP 200 it receives a disarchive specification, extracts the embedded `swh:1:dir:...` SWHID, and checks it via `/known/`. If the SWHID is known, the function returns `KNOWN_AFTER_DISARCHIVE` immediately, using the database spec as `disarchive_spec` and the `directory-ref` `name` field as `disarchive_top_dir`. No local `nix build`, unpacking, or `disarchive disassemble` is performed.
+The database lookup (`_try_disarchive_database`) sends a `GET` request to `<disarchive-db-url>/<hash_algo>/<hash_hex>`. The FOD must have both a hash algorithm and a hash value; otherwise the lookup is skipped and the local path is used. On HTTP 200 it receives a disarchive specification, validates it with `_is_valid_disarchive_spec`, extracts the embedded `swh:1:dir:...` SWHID, and checks it via `/known/`. If the SWHID is known, the function returns `KNOWN_AFTER_DISARCHIVE` immediately, using the database spec as `disarchive_spec` and the `directory-ref` `name` field as `disarchive_top_dir`. No local `nix build`, unpacking, or `disarchive disassemble` is performed.
 
-If the database returns 404, the spec has no embedded SWHID, the database request fails, or the FOD has no usable hash, the function falls back to `_try_disarchive_local`. If the database returned a spec but its embedded SWHID is unknown, the spec is still forwarded to `_try_disarchive_local` so that, if the stripped directory SWHID is known locally, `disarchive disassemble` can be skipped and the fetched spec can be reused:
+`_is_valid_disarchive_spec` rejects empty specs and specs of the form `(disarchive (version 0) #f)`. The latter is what `disarchive disassemble` writes when it cannot produce a blueprint for the archive format; using it would make `disarchive assemble` fail later with a cryptic error, so it is treated as no spec at all.
+
+If the database returns 404, the spec is invalid or has no embedded SWHID, the database request fails, or the FOD has no usable hash, the function falls back to `_try_disarchive_local`. If the database returned a usable spec but its embedded SWHID is unknown, the spec is still forwarded to `_try_disarchive_local` so that, if the stripped directory SWHID is known locally, `disarchive disassemble` can be skipped and the fetched spec can be reused:
 
 1. Realise the FOD.
 2. If it is not a regular file, give up.
@@ -115,11 +117,12 @@ If the database returns 404, the spec has no embedded SWHID, the database reques
 4. If the archive contains a single top-level directory, descend into it (Nix `stripHash` semantics).
 5. Compute the stripped directory SWHID with `swh identify`.
 6. Look up the stripped SWHID via `/known/`.
-7. If the stripped SWHID is known, obtain a disarchive specification. If `_try_disarchive_database` already fetched a spec, reuse it; otherwise capture a fresh `disarchive disassemble` specification so the exact original archive can be reconstructed later.
-8. If the disarchive specification contains its own directory SWHID, look that up too.
-9. Report `KNOWN_AFTER_DISARCHIVE` if either SWHID is known; otherwise report `UNKNOWN`.
+7. If the stripped SWHID is known, obtain a disarchive specification. If `_try_disarchive_database` already fetched a usable spec, reuse it; otherwise capture a fresh `disarchive disassemble` specification so the exact original archive can be reconstructed later.
+8. If the captured or reused specification is invalid (for example, `disarchive` returned `(disarchive (version 0) #f)` because it cannot describe the archive format), report `UNDETERMINED`: the contents are known, but the original archive cannot be reconstructed.
+9. If the disarchive specification contains its own directory SWHID, look that up too.
+10. Report `KNOWN_AFTER_DISARCHIVE` if either SWHID is known; otherwise report `UNKNOWN`.
 
-If `swh identify` fails or times out after unpacking, the result is `UNDETERMINED`. If a fresh `disarchive disassemble` fails or times out, the result is also `UNDETERMINED`, but the stripped SWHID and URL are preserved: without a disarchive specification the exact original archive cannot be reconstructed, so the result cannot be turned into a SWH-backed FOD. When a database spec is reused, the local `disarchive disassemble` step is skipped entirely, so it cannot fail.
+If `swh identify` fails or times out after unpacking, the result is `UNDETERMINED`. If a fresh `disarchive disassemble` fails, times out, or produces an invalid spec, the result is also `UNDETERMINED`, but the stripped SWHID and URL are preserved: without a usable disarchive specification the exact original archive cannot be reconstructed, so the result cannot be turned into a SWH-backed FOD. When a database spec is reused, the local `disarchive disassemble` step is skipped entirely, so it cannot fail; however, the database spec itself is validated before reuse.
 
 The reported SWHID prefers the disarchive SWHID when it is known, because that is the directory `disarchive assemble` can rebuild from directly. Otherwise the stripped SWHID is used.
 
@@ -179,6 +182,10 @@ The `outputHashMode` mapping for content SWHIDs is:
 - `git` → `"git"`
 
 If the FOD method is missing or unsupported, `swh_fod_expression` returns `None` and the result is skipped.
+
+### Cache-warmer derivation
+
+The repository contains a checked-in empty derivation at `nix/cache-warmer.nix`. It is generated by `swh_fod.py:cache_warmer_derivation()` and its `nativeBuildInputs` are exactly the tools used by the directory and disarchive expression types (`curl`, `cacert`, `gnutar`, `bzip2`, `xz`, and `disarchive`). The derivation does nothing except create `$out`; its only purpose is to pre-populate the Nix store cache in CI before `build-swh-fods` runs, so the required tools do not need to be fetched while the SWH API is being queried. `tests/test_swh_fod.py:test_checked_in_cache_warmer_matches_generator` asserts that the checked-in file stays in sync with the generator.
 
 ## Requesting archival of unknown origins
 

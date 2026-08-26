@@ -114,7 +114,7 @@ nix run .#nix-fod-swh-check -- cook-swh-fods swh-backed-fods.nix
 nix run .#nix-fod-swh-check -- build-swh-fods swh-backed-fods.nix
 ```
 
-Already-built outputs are skipped. Use `--no-substitute` to build from (Software Heritage) sources instead of using the NixOS cache. If a required vault archive is not cooked, the command fails and tells you to run `cook-swh-fods` first.
+Already-built outputs are skipped. Use `--no-substitute` to build from (Software Heritage) sources instead of using the NixOS cache. If a required vault archive is not cooked, the corresponding FOD is skipped with a warning and you should run `cook-swh-fods` first.
 
 ## Documentation
 

@@ -25,6 +25,15 @@ _SWH_API_URL = "https://archive.softwareheritage.org/api/1"
 _DEFAULT_NIXPKGS_URL = "https://github.com/NixOS/nixpkgs/archive/e72e4f299401a3689d4b3d5fc6496b11db7064eb.tar.gz"
 _DEFAULT_NIXPKGS_SHA256 = "sha256-8fsyqeO+mJqvIzeO4xIpgJe/f7MTbbVTEC6RT6WSXNs="
 
+_ARCHIVE_BUILD_TOOLS = (
+    "pkgs.curl",
+    "pkgs.cacert",
+    "pkgs.gnutar",
+    "pkgs.bzip2",
+    "pkgs.xz",
+)
+_DISARCHIVE_BUILD_TOOLS = ("pkgs.disarchive",) + _ARCHIVE_BUILD_TOOLS
+
 
 @dataclass
 class SWHFodExpression:
@@ -119,6 +128,7 @@ def _content_hash_expression(result: SWHCheckResult) -> SWHFodExpression | None:
             hash_hex=fod.hash_hex,
             url=url,
             output_hash_mode="flat",
+            executable=fod.executable,
         ),
     )
 
@@ -145,6 +155,10 @@ def _content_swhid_expression(result: SWHCheckResult) -> SWHFodExpression | None
     url = f"{_SWH_API_URL}/content/sha1_git:{sha1_git}/raw/"
     hash_algo = fod.hash_algo or _algo_from_hash(fod.hash_hex) or "sha1"
     hash_hex = fod.hash_hex or sha1_git
+    # Recursive/NAR-hashed single-file FODs need the executable bit set so
+    # that ``builtin:fetchurl`` computes the NAR hash of an executable file
+    # rather than falling back to a flat content hash.
+    executable = output_hash_mode == "recursive" or fod.executable
     return SWHFodExpression(
         label=fod.label,
         nix_code=_flat_fod_derivation(
@@ -153,6 +167,7 @@ def _content_swhid_expression(result: SWHCheckResult) -> SWHFodExpression | None
             hash_hex=hash_hex,
             url=url,
             output_hash_mode=output_hash_mode,
+            executable=executable,
         ),
     )
 
@@ -224,15 +239,38 @@ def _flat_fod_derivation(
     hash_hex: str,
     url: str,
     output_hash_mode: str,
+    executable: bool = False,
 ) -> str:
+    lines = [
+        f"  name = {nix_quote(name)};",
+        "  system = builtins.currentSystem;",
+        '  builder = "builtin:fetchurl";',
+        f"  outputHashMode = {nix_quote(output_hash_mode)};",
+        f"  outputHashAlgo = {nix_quote(hash_algo)};",
+        f"  outputHash = {nix_quote(hash_hex)};",
+    ]
+    if executable:
+        lines.append('  executable = "1";')
+    lines.append(f"  url = {nix_quote(url)};")
+    body = "\n".join(lines)
     return f"""builtins.derivation {{
-  name = {nix_quote(name)};
-  system = builtins.currentSystem;
-  builder = "builtin:fetchurl";
-  outputHashMode = {nix_quote(output_hash_mode)};
-  outputHashAlgo = {nix_quote(hash_algo)};
-  outputHash = {nix_quote(hash_hex)};
-  url = {nix_quote(url)};
+{body}
+}}
+"""
+
+
+def _archive_native_build_inputs(*, include_disarchive: bool) -> str:
+    tools = _DISARCHIVE_BUILD_TOOLS if include_disarchive else _ARCHIVE_BUILD_TOOLS
+    return "[ " + " ".join(tools) + " ]"
+
+
+def cache_warmer_derivation() -> str:
+    """Return the checked-in cache warmer derivation code."""
+    return f"""{{ pkgs }}:
+pkgs.stdenv.mkDerivation {{
+  name = "cache-warmer";
+  nativeBuildInputs = {_archive_native_build_inputs(include_disarchive=True)};
+  buildCommand = "mkdir -p $out";
 }}
 """
 
@@ -250,12 +288,18 @@ def _directory_fod_derivation(
   outputHashMode = "recursive";
   outputHashAlgo = {nix_quote(hash_algo)};
   outputHash = {nix_quote(hash_hex)};
-  nativeBuildInputs = [ pkgs.curl pkgs.cacert pkgs.gnutar ];
+      nativeBuildInputs = {_archive_native_build_inputs(include_disarchive=False)};
   buildCommand = ''
     export SSL_CERT_FILE="${{pkgs.cacert}}/etc/ssl/certs/ca-bundle.crt"
     mkdir -p tmp
-    curl -L -f -o tmp/bundle.tar.bz2 {nix_quote(url)}
-    tar -xjf tmp/bundle.tar.bz2 -C tmp
+    curl -L -f -o tmp/bundle {nix_quote(url)}
+    case $(file -b --mime-type tmp/bundle) in
+      application/x-bzip2) tar -xjf tmp/bundle -C tmp ;;
+      application/x-xz) tar -xJf tmp/bundle -C tmp ;;
+      application/gzip) tar -xzf tmp/bundle -C tmp ;;
+      application/x-tar) tar -xf tmp/bundle -C tmp ;;
+      *) tar -xaf tmp/bundle -C tmp ;;
+    esac
     dir=$(find tmp -mindepth 1 -maxdepth 1 -type d | head -n1)
     mv "$dir" $out
   '';
@@ -280,12 +324,18 @@ pkgs.stdenv.mkDerivation {{
   outputHashMode = "flat";
   outputHashAlgo = {nix_quote(hash_algo)};
   outputHash = {nix_quote(hash_hex)};
-  nativeBuildInputs = [ pkgs.disarchive pkgs.curl pkgs.cacert pkgs.gnutar ];
+  nativeBuildInputs = {_archive_native_build_inputs(include_disarchive=True)};
   buildCommand = ''
     export SSL_CERT_FILE="${{pkgs.cacert}}/etc/ssl/certs/ca-bundle.crt"
     mkdir -p tmp
-    curl -L -f -o tmp/bundle.tar.bz2 {nix_quote(url)}
-    tar -xjf tmp/bundle.tar.bz2 -C tmp
+    curl -L -f -o tmp/bundle {nix_quote(url)}
+    case $(file -b --mime-type tmp/bundle) in
+      application/x-bzip2) tar -xjf tmp/bundle -C tmp ;;
+      application/x-xz) tar -xJf tmp/bundle -C tmp ;;
+      application/gzip) tar -xzf tmp/bundle -C tmp ;;
+      application/x-tar) tar -xf tmp/bundle -C tmp ;;
+      *) tar -xaf tmp/bundle -C tmp ;;
+    esac
     dir=$(find tmp -mindepth 1 -maxdepth 1 -type d | head -n1)
     disarchive assemble "$dir" ${{specFile}} -o $out
   '';
@@ -311,13 +361,19 @@ pkgs.stdenv.mkDerivation {{
   outputHashMode = "flat";
   outputHashAlgo = {nix_quote(hash_algo)};
   outputHash = {nix_quote(hash_hex)};
-  nativeBuildInputs = [ pkgs.disarchive pkgs.curl pkgs.cacert pkgs.gnutar ];
+  nativeBuildInputs = {_archive_native_build_inputs(include_disarchive=True)};
   topDir = {nix_quote(top_dir)};
   buildCommand = ''
     export SSL_CERT_FILE="${{pkgs.cacert}}/etc/ssl/certs/ca-bundle.crt"
     mkdir -p tmp
-    curl -L -f -o tmp/bundle.tar.bz2 {nix_quote(url)}
-    tar -xjf tmp/bundle.tar.bz2 -C tmp
+    curl -L -f -o tmp/bundle {nix_quote(url)}
+    case $(file -b --mime-type tmp/bundle) in
+      application/x-bzip2) tar -xjf tmp/bundle -C tmp ;;
+      application/x-xz) tar -xJf tmp/bundle -C tmp ;;
+      application/gzip) tar -xzf tmp/bundle -C tmp ;;
+      application/x-tar) tar -xf tmp/bundle -C tmp ;;
+      *) tar -xaf tmp/bundle -C tmp ;;
+    esac
     stripped=$(find tmp -mindepth 1 -maxdepth 1 -type d | head -n1)
     mkdir -p "tmp/wrapped/$topDir"
     find "$stripped" -mindepth 1 -maxdepth 1 -exec mv {{}} "tmp/wrapped/$topDir/" \\;

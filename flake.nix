@@ -44,6 +44,8 @@
         # Re-export the locked nixpkgs input's hello package so the
         # integration job can use a reproducible, pinned installable.
         packages.hello = nixpkgs.legacyPackages.${system}.hello;
+        # Empty derivation used to warm the Nix store cache in CI.
+        packages.cache-warmer = import ./nix/cache-warmer.nix { inherit pkgs; };
 
         # Fixed-output derivations used to test parser normalization across
         # Nix implementations.  These derivations are never built; they only

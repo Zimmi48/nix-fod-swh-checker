@@ -91,7 +91,7 @@ Status labels:
 - `KNOWN` — the FOD is known to Software Heritage.
 - `KNOWN AFTER DISARCHIVE` — the raw FOD is not known, but its unpacked contents are known as a directory.
 - `UNKNOWN` — the FOD is not known to Software Heritage.
-- `UNDETERMINED` — the check could not be completed (for example, the FOD could not be realised or `swh identify` failed).
+- `UNDETERMINED` — the check could not be completed (for example, the FOD could not be realised, `swh identify` failed, or the archive contents are known but `disarchive` could not capture a usable specification for the archive format).
 
 If `--only-unknown` is given, only `UNKNOWN` and `UNDETERMINED` entries are printed, but the summary line still counts all FODs.
 
@@ -111,7 +111,7 @@ When `-o`/`--output` is given, the file contains a JSON array of result objects.
 | `detail` | string | Human-readable explanation of the result. |
 | `swhid` | string or `null` | The Software Heritage persistent identifier, if one was computed or looked up. |
 | `swh_url` | string or `null` | URL of the object on `https://archive.softwareheritage.org`, if known. |
-| `disarchive_spec` | string or `null` | The GNU Guix `disarchive` specification, if captured. |
+| `disarchive_spec` | string or `null` | The GNU Guix `disarchive` specification, if captured. `null` when no specification was obtained, including when `disarchive` could not produce a usable specification for the archive format. |
 | `disarchive_swhid` | string or `null` | The SWHID embedded in the disarchive specification, if any. |
 | `disarchive_top_dir` | string or `null` | The name of the single top-level directory from the disarchive specification, if any. This is the directory Nix normally strips when unpacking an archive. |
 | `origin_urls` | list of strings | Upstream origin URLs extracted from the FOD's derivation environment, if any. Empty when no URLs are declared. |
@@ -277,10 +277,10 @@ The command then:
 1. Lists the attribute names defined in the Nix file.
 2. Runs `nix build --dry-run -f <file> <attrs> --json` to determine output paths and which derivations would be built locally versus fetched from a substituter.
 3. Checks which output paths are already in the local Nix store.
-4. For any missing vault-backed FODs whose derivation would be built locally, verifies that the corresponding vault flat archives are cooked on Software Heritage. FODs that would be fetched from a substituter do not require vault cooking.
-5. Builds the missing attributes with `nix build -f <file> <attrs>`.
+4. For any missing vault-backed FODs whose derivation would be built locally, verifies that the corresponding vault flat archives are cooked on Software Heritage. FODs that would be fetched from a substituter do not require vault cooking. FODs whose vault archive is not cooked are skipped with a warning instead of failing the command.
+5. Builds the remaining missing attributes with `nix build -f <file> <attrs>`.
 
-If all outputs are already in the store, the command reports this and exits `0` without building.
+If all outputs are already in the store or only uncooked vault archives remain, the command reports this and exits `0` without building.
 
 #### `build-swh-fods` options
 
@@ -300,7 +300,7 @@ If all outputs are already in the store, the command reports this and exits `0` 
 | Code | Meaning |
 |------|---------|
 | `0` | Success, or all outputs were already in the store, or there were no SWH-backed FODs to build. |
-| `1` | A `nix` command failed, a vault flat archive is not cooked, a Software Heritage API error occurred, or the checkpoint could not be read. |
+| `1` | A `nix` command failed, a Software Heritage API error occurred, or the checkpoint could not be read. |
 | `2` | Incompatible options were given. |
 
 ---

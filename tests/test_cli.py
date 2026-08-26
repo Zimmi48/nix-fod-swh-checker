@@ -188,6 +188,7 @@ def test_check_writes_json_output_with_all_documented_fields(monkeypatch, tmp_pa
         "hash_hex",
         "label",
         "origin_urls",
+        "executable",
     }
     assert fod_obj["drv_path"] == fod.drv_path
     assert fod_obj["output_name"] == "out"
@@ -1322,11 +1323,11 @@ def test_check_skip_disarchive_passes_flag_to_check_fod(monkeypatch, capsys, tmp
     assert passed["skip_disarchive"] is True
 
 
-def test_build_swh_fods_fails_when_vault_not_cooked(monkeypatch, capsys, tmp_path):
+def test_build_swh_fods_skips_uncooked_vault_with_warning(monkeypatch, capsys, tmp_path):
     dir_swhid = "swh:1:dir:" + "b" * 40
     nix_file = tmp_path / "swh-backed-fods.nix"
     nix_file.write_text(
-        f'{{ pkgs ? {{}} }}: {{ "a" = pkgs.runCommand "x" {{}} "curl https://archive.softwareheritage.org/api/1/vault/flat/{dir_swhid}/raw"; }}\n'
+        f'{{ pkgs ? {{}} }}: {{ "a" = pkgs.runCommand "x" {{}} "curl https://archive.softwareheritage.org/api/1/vault/flat/{dir_swhid}/raw"; "b" = builtins.fetchurl {{ url = "u"; }} }}\n'
     )
 
     built = []
@@ -1337,14 +1338,17 @@ def test_build_swh_fods_fails_when_vault_not_cooked(monkeypatch, capsys, tmp_pat
         cli,
         "dry_run_nix_file",
         lambda *a, **k: DryRunPlan(
-            plan=[{"outputs": {"out": "/nix/store/out-a"}, "drvPath": "/nix/store/a.drv"}],
-            will_build={"/nix/store/a.drv"},
+            plan=[
+                {"outputs": {"out": "/nix/store/out-a"}, "drvPath": "/nix/store/a.drv"},
+                {"outputs": {"out": "/nix/store/out-b"}, "drvPath": "/nix/store/b.drv"},
+            ],
+            will_build={"/nix/store/a.drv", "/nix/store/b.drv"},
             will_fetch=set(),
         ),
     )
-    monkeypatch.setattr(cli, "_list_attrs_in_nix_file", lambda path: ["a"])
+    monkeypatch.setattr(cli, "_list_attrs_in_nix_file", lambda path: ["a", "b"])
     monkeypatch.setattr(
-        cli, "_eval_nix_file_outputs", lambda path: {"a": "/nix/store/out-a"}
+        cli, "_eval_nix_file_outputs", lambda path: {"a": "/nix/store/out-a", "b": "/nix/store/out-b"}
     )
     monkeypatch.setattr(cli, "_extract_vault_swhids_by_attr", lambda path: {"a": dir_swhid})
     monkeypatch.setattr(cli.os.path, "exists", lambda path: False)
@@ -1363,10 +1367,11 @@ def test_build_swh_fods_fails_when_vault_not_cooked(monkeypatch, capsys, tmp_pat
 
     exit_code = cli.main(["build-swh-fods", str(nix_file), "--quiet"])
     err = capsys.readouterr().err
-    assert exit_code == 1
+    assert exit_code == 0
+    assert "warning" in err
     assert "not cooked" in err
     assert "cook-swh-fods" in err
-    assert built == []
+    assert built == [(str(nix_file), ["b"], {"extra_args": [], "on_log": None})]
 
 
 def test_build_swh_fods_skips_vault_check_for_fetched_paths(monkeypatch, capsys, tmp_path):
