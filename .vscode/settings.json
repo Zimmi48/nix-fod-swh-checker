@@ -1,6 +1,7 @@
 {
     "chat.tools.terminal.autoApprove": {
         "nix": true,
-        "pytest": true
+        "pytest": true,
+        "tee": true
     }
 }
