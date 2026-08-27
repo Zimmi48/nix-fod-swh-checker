@@ -448,7 +448,10 @@ def iter_fixed_output_derivations(
         outputs = drv.get("outputs", {}) or {}
         if not isinstance(outputs, dict):
             continue
-        env = _normalize_env(drv.get("env", {}) or {})
+        structured_attrs = drv.get("structuredAttrs", {}) or {}
+        if not isinstance(structured_attrs, dict):
+            structured_attrs = {}
+        env = _normalize_env(drv.get("env", {}) or {}, structured_attrs)
         for output_name, output in outputs.items():
             if not isinstance(output, dict):
                 continue
@@ -469,7 +472,7 @@ def iter_fixed_output_derivations(
             )
 
 
-def _normalize_env(env: dict) -> dict:
+def _normalize_env(env: dict, structured_attrs: dict | None = None) -> dict:
     """Return a normalized view of a derivation environment.
 
     Some derivations (notably those produced by ``fetchzip``,
@@ -478,8 +481,21 @@ def _normalize_env(env: dict) -> dict:
     variable. When present, parse it and merge its contents with the
     top-level env so that callers can read ``url``, ``urls``,
     ``outputHashMode``, ``executable``, etc. transparently.
+
+    The precedence for merging is:
+    1. Top-level env variables (lowest priority)
+    2. structuredAttrs (if present)
+    3. env.__json (highest priority)
     """
     normalized = dict(env)
+    
+    # Merge in structuredAttrs if present
+    if structured_attrs:
+        # structuredAttrs represents the same environment, so it should be
+        # merged in, but env.__json takes precedence if present
+        normalized.update(structured_attrs)
+    
+    # Parse and merge env.__json (highest precedence)
     json_env = normalized.get("__json")
     if isinstance(json_env, str):
         try:

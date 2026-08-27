@@ -377,6 +377,73 @@ def test_iter_fixed_output_derivations_reads_urls_from_json_env():
     assert not fod.executable
 
 
+def test_normalize_env_merges_structured_attrs():
+    # Some derivations provide environment variables via structuredAttrs
+    # instead of env.__json. These should be merged into the env.
+    env = {"out": "/nix/store/x-out"}
+    structured_attrs = {
+        "urls": ["https://example.com/a.tar.gz"],
+        "outputHashMode": "recursive",
+        "executable": False,
+    }
+    normalized = _normalize_env(env, structured_attrs)
+    assert normalized["urls"] == ["https://example.com/a.tar.gz"]
+    assert normalized["outputHashMode"] == "recursive"
+    assert normalized["executable"] is False
+    assert normalized["out"] == "/nix/store/x-out"
+
+
+def test_normalize_env_precedence():
+    # Verify that the precedence is: env < structuredAttrs < env.__json
+    env = {
+        "url": "https://env-level.com/file.tar.gz",
+        "__json": json.dumps({"url": "https://json-env.com/file.tar.gz"}),
+        "out": "/nix/store/x-out",
+    }
+    structured_attrs = {
+        "url": "https://structured-attrs.com/file.tar.gz",
+        "outputHashMode": "recursive",
+    }
+    normalized = _normalize_env(env, structured_attrs)
+    # env.__json should win for "url"
+    assert normalized["url"] == "https://json-env.com/file.tar.gz"
+    # structured_attrs should be present
+    assert normalized["outputHashMode"] == "recursive"
+    # env variables should be preserved
+    assert normalized["out"] == "/nix/store/x-out"
+
+
+def test_iter_fixed_output_derivations_reads_urls_from_structured_attrs():
+    # Issue #48: Some derivations store URLs in structuredAttrs instead of
+    # env.__json. This test verifies that we correctly extract them.
+    derivations = {
+        "/nix/store/03wjn4yy77lzalrc8k3gfpnmbic2601h-source.drv": {
+            "name": "source",
+            "env": {
+                "out": "/nix/store/1wgdrmpkzcvajkxy2gf853h28z7mzd8m-source"
+            },
+            "structuredAttrs": {
+                "urls": ["https://git.sr.ht/~rkta/w3m/archive/v0.5.6.tar.gz"],
+                "outputHashMode": "recursive",
+                "executable": False,
+            },
+            "outputs": {
+                "out": {
+                    "path": "/nix/store/1wgdrmpkzcvajkxy2gf853h28z7mzd8m-source",
+                    "hashAlgo": "sha256",
+                    "method": "nar",
+                    "hash": "549ced72f726980f1fe5127e3446233c4f021847c24518d0f9fb85d14a58fac0",
+                }
+            },
+        },
+    }
+
+    (fod,) = list(iter_fixed_output_derivations(derivations))
+    assert fod.method == "nar"
+    assert fod.origin_urls == ["https://git.sr.ht/~rkta/w3m/archive/v0.5.6.tar.gz"]
+    assert not fod.executable
+
+
 def test_show_derivations_recursive_parses_json(monkeypatch):
     def fake_run(cmd, check, capture_output, text):
         assert cmd[:4] == ["nix", "derivation", "show", "--recursive"]
