@@ -1,4 +1,4 @@
-# nix-archive-srcer specification
+# nix-archive-src specification
 
 This document is the authoritative user-facing reference for `nix-archive-src`. It describes every subcommand, option, output format, exit code, and file format exactly as the current implementation behaves.
 
@@ -10,7 +10,7 @@ For a gentler introduction, see [README.md](../README.md). For implementation de
 nix-archive-src <subcommand> [options] <arguments>
 ```
 
-The program is also exposed as the Python module `nix_fod_swh_checker.cli:main` and can be run with `python -m nix_fod_swh_checker`.
+The program is also exposed as the Python module `nix_archive_src.cli:main` and can be run with `python -m nix_archive_src`.
 
 A subcommand is required. Running without one prints a usage message and exits with code `2`.
 
