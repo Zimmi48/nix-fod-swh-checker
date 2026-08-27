@@ -114,7 +114,7 @@ If the database returns 404, the spec is invalid or has no embedded SWHID, the d
 
 1. Realise the FOD.
 2. If it is not a regular file, give up.
-3. Unpack it as a tar or zip archive to a temporary directory.
+3. Unpack it as a tar or zip archive to a temporary directory. A timeout (`--unpack-timeout`) is applied because unpacking can take a very long time on some archives; if it is reached, the result is `UNDETERMINED`.
 4. If the archive contains a single top-level directory, descend into it (Nix `stripHash` semantics).
 5. Compute the stripped directory SWHID with `swh identify`.
 6. Look up the stripped SWHID via `/known/`.
@@ -123,7 +123,7 @@ If the database returns 404, the spec is invalid or has no embedded SWHID, the d
 9. If the disarchive specification contains its own directory SWHID, look that up too.
 10. Report `KNOWN_AFTER_DISARCHIVE` if either SWHID is known; otherwise report `UNKNOWN`.
 
-If `swh identify` fails or times out after unpacking, the result is `UNDETERMINED`. If a fresh `disarchive disassemble` fails, times out, or produces an invalid spec, the result is also `UNDETERMINED`, but the stripped SWHID and URL are preserved: without a usable disarchive specification the exact original archive cannot be reconstructed, so the result cannot be turned into a SWH-backed FOD. When a database spec is reused, the local `disarchive disassemble` step is skipped entirely, so it cannot fail; however, the database spec itself is validated before reuse.
+If unpacking fails or times out, the result is `UNDETERMINED`. If `swh identify` fails or times out after unpacking, the result is `UNDETERMINED`. If a fresh `disarchive disassemble` fails, times out, or produces an invalid spec, the result is also `UNDETERMINED`, but the stripped SWHID and URL are preserved: without a usable disarchive specification the exact original archive cannot be reconstructed, so the result cannot be turned into a SWH-backed FOD. When a database spec is reused, the local `disarchive disassemble` step is skipped entirely, so it cannot fail; however, the database spec itself is validated before reuse.
 
 The reported SWHID prefers the disarchive SWHID when it is known, because that is the directory `disarchive assemble` can rebuild from directly. Otherwise the stripped SWHID is used.
 

@@ -8,6 +8,7 @@ import pytest
 from nix_fod_swh_checker import disarchive as disarchive_module
 from nix_fod_swh_checker.disarchive import (
     DisarchiveError,
+    DisarchiveTimeoutError,
     try_disarchive,
     unpack_archive,
 )
@@ -473,6 +474,9 @@ def test_try_disarchive_caches_invalid_local_spec_as_miss(monkeypatch, tmp_path)
             # Let the real ``swh identify`` tool run; it is available in the
             # test environment and produces the stripped directory SWHID.
             return original_subprocess_run(cmd, **kwargs)
+        if cmd[1] == "-c":
+            # Unpacking subprocess; let it run normally.
+            return original_subprocess_run(cmd, **kwargs)
         # Write the invalid disarchive spec to the output file requested by
         # ``disarchive disassemble`` so the real caching path is exercised.
         assert cmd[1] == "disassemble"
@@ -487,8 +491,9 @@ def test_try_disarchive_caches_invalid_local_spec_as_miss(monkeypatch, tmp_path)
     result1 = try_disarchive(fod, client, cache=cache)
     assert result1.known is None
     assert result1.method == SWHLookupMethod.UNDETERMINED
-    # One call for ``swh identify`` and one for ``disarchive disassemble``.
-    assert len(calls) == 2
+    # One call for unpacking, one for ``swh identify``, and one for
+    # ``disarchive disassemble``.
+    assert len(calls) == 3
 
     cache.save()
     cache2 = Cache(tmp_path / "cache.json")
@@ -496,7 +501,7 @@ def test_try_disarchive_caches_invalid_local_spec_as_miss(monkeypatch, tmp_path)
     assert result2.known is None
     assert result2.method == SWHLookupMethod.UNDETERMINED
     # The cached invalid spec must prevent a second ``disarchive disassemble``.
-    assert len(calls) == 2
+    assert len(calls) == 3
 
 
 def test_try_disarchive_caches_disarchive_timeout_as_miss(monkeypatch, tmp_path):
@@ -519,6 +524,8 @@ def test_try_disarchive_caches_disarchive_timeout_as_miss(monkeypatch, tmp_path)
         calls.append(cmd)
         if cmd[1] == "identify":
             return original_subprocess_run(cmd, **kwargs)
+        if cmd[1] == "-c":
+            return original_subprocess_run(cmd, **kwargs)
         assert cmd[1] == "disassemble"
         raise subprocess_module.TimeoutExpired(cmd, kwargs["timeout"])
 
@@ -530,8 +537,9 @@ def test_try_disarchive_caches_disarchive_timeout_as_miss(monkeypatch, tmp_path)
     assert result1.known is None
     assert result1.method == SWHLookupMethod.UNDETERMINED
     assert "timed out" in result1.detail
-    # One call for ``swh identify`` and one for ``disarchive disassemble``.
-    assert len(calls) == 2
+    # One call for unpacking, one for ``swh identify``, and one for
+    # ``disarchive disassemble``.
+    assert len(calls) == 3
 
     cache.save()
     cache2 = Cache(tmp_path / "cache.json")
@@ -540,7 +548,7 @@ def test_try_disarchive_caches_disarchive_timeout_as_miss(monkeypatch, tmp_path)
     assert result2.method == SWHLookupMethod.UNDETERMINED
     assert "timed out" in result2.detail
     # The cached timeout must prevent a second ``disarchive disassemble``.
-    assert len(calls) == 2
+    assert len(calls) == 3
 
 
 def test_try_disarchive_ignores_cached_disarchive_timeout_when_increased(monkeypatch, tmp_path):
@@ -563,6 +571,8 @@ def test_try_disarchive_ignores_cached_disarchive_timeout_when_increased(monkeyp
         calls.append((cmd[1], kwargs.get("timeout")))
         if cmd[1] == "identify":
             return original_subprocess_run(cmd, **kwargs)
+        if cmd[1] == "-c":
+            return original_subprocess_run(cmd, **kwargs)
         assert cmd[1] == "disassemble"
         if kwargs["timeout"] <= 1.0:
             raise subprocess_module.TimeoutExpired(cmd, kwargs["timeout"])
@@ -580,15 +590,125 @@ def test_try_disarchive_ignores_cached_disarchive_timeout_when_increased(monkeyp
     result1 = try_disarchive(fod, client, cache=cache, disarchive_timeout=1.0)
     assert result1.known is None
     assert result1.method == SWHLookupMethod.UNDETERMINED
-    assert len(calls) == 2
+    # One call for unpacking, one for ``swh identify``, and one for
+    # ``disarchive disassemble``.
+    assert len(calls) == 3
 
     cache.save()
     cache2 = Cache(tmp_path / "cache.json")
     result2 = try_disarchive(fod, client, cache=cache2, disarchive_timeout=2.0)
     assert result2.known is True
     assert result2.method == SWHLookupMethod.KNOWN_AFTER_DISARCHIVE
-    # ``swh identify`` is still cached, so only ``disarchive disassemble`` runs again.
-    assert len(calls) == 3
+    # Unpacking and ``swh identify`` are still cached, so only
+    # ``disarchive disassemble`` runs again.
+    assert len(calls) == 5
+
+
+def test_unpack_archive_timeout_is_applied(monkeypatch, tmp_path):
+    """The timeout is passed to the subprocess used for unpacking."""
+    archive = _make_tar_archive(tmp_path, [("src/file.txt", "hello")])
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(kwargs.get("timeout"))
+        # Return a completed process without actually extracting anything.
+        import subprocess as subprocess_module
+
+        return subprocess_module.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(disarchive_module.subprocess, "run", fake_run)
+    unpack_archive(str(archive), timeout=5.0)
+    assert calls == [5.0]
+
+
+def test_unpack_archive_timeout_is_cached_as_miss(monkeypatch, tmp_path):
+    """A timeout during unpacking is cached and reused with lower timeouts."""
+    from nix_fod_swh_checker.cache import Cache
+
+    archive = _make_tar_archive(tmp_path, [("src/file.txt", "hello")])
+    cache = Cache(tmp_path / "cache.json")
+
+    def fake_run(cmd, **kwargs):
+        import subprocess as subprocess_module
+
+        raise subprocess_module.TimeoutExpired(cmd, kwargs["timeout"])
+
+    monkeypatch.setattr(disarchive_module.subprocess, "run", fake_run)
+
+    with pytest.raises(DisarchiveTimeoutError):
+        unpack_archive(str(archive), timeout=1.0, cache=cache, cache_key="test")
+
+    cache.save()
+    cache2 = Cache(tmp_path / "cache.json")
+    calls = []
+
+    def counting_run(cmd, **kwargs):
+        calls.append(kwargs.get("timeout"))
+        import subprocess as subprocess_module
+
+        raise subprocess_module.TimeoutExpired(cmd, kwargs["timeout"])
+
+    monkeypatch.setattr(disarchive_module.subprocess, "run", counting_run)
+    with pytest.raises(DisarchiveTimeoutError):
+        unpack_archive(str(archive), timeout=0.5, cache=cache2, cache_key="test")
+    assert calls == []
+
+
+def test_unpack_archive_ignores_cached_timeout_when_increased(monkeypatch, tmp_path):
+    """A cached unpack timeout is ignored when the timeout is increased."""
+    from nix_fod_swh_checker.cache import Cache
+
+    archive = _make_tar_archive(tmp_path, [("src/file.txt", "hello")])
+    cache = Cache(tmp_path / "cache.json")
+
+    def fake_run(cmd, **kwargs):
+        import subprocess as subprocess_module
+
+        raise subprocess_module.TimeoutExpired(cmd, kwargs["timeout"])
+
+    monkeypatch.setattr(disarchive_module.subprocess, "run", fake_run)
+
+    with pytest.raises(DisarchiveTimeoutError):
+        unpack_archive(str(archive), timeout=1.0, cache=cache, cache_key="test")
+
+    cache.save()
+    cache2 = Cache(tmp_path / "cache.json")
+    calls = []
+
+    def counting_run(cmd, **kwargs):
+        calls.append(kwargs.get("timeout"))
+        import subprocess as subprocess_module
+
+        raise subprocess_module.TimeoutExpired(cmd, kwargs["timeout"])
+
+    monkeypatch.setattr(disarchive_module.subprocess, "run", counting_run)
+    with pytest.raises(DisarchiveTimeoutError):
+        unpack_archive(str(archive), timeout=2.0, cache=cache2, cache_key="test")
+    assert calls == [2.0]
+
+
+def test_try_disarchive_unpack_timeout_is_undetermined(monkeypatch, tmp_path):
+    """When unpacking times out, the result is reported as undetermined."""
+    import subprocess as subprocess_module
+
+    archive = _make_tar_archive(tmp_path, [("src/file.txt", "hello")])
+
+    monkeypatch.setattr(
+        disarchive_module, "realise_fod", lambda fod, *, nix_binary, on_log=None: str(archive)
+    )
+
+    def fake_run(cmd, **kwargs):
+        raise subprocess_module.TimeoutExpired(cmd, kwargs["timeout"])
+
+    monkeypatch.setattr(disarchive_module.subprocess, "run", fake_run)
+
+    client = FakeSWHClient()
+    result = try_disarchive(make_fod(), client, unpack_timeout=1.0)
+    assert isinstance(result, SWHCheckResult)
+    assert result.known is None
+    assert result.method == SWHLookupMethod.UNDETERMINED
+    assert "unpacking" in result.detail
+    assert "timed out" in result.detail
 
 
 def test_try_disarchive_skip_disarchive_skips_database_lookup(monkeypatch, tmp_path):

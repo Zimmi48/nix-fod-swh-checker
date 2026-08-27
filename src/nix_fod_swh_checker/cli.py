@@ -258,6 +258,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="timeout in seconds for the 'disarchive disassemble' command on each archive (default: %(default)s)",
     )
     check_parser.add_argument(
+        "--unpack-timeout",
+        type=float,
+        default=30.0,
+        help="timeout in seconds for unpacking each archive (default: %(default)s)",
+    )
+    check_parser.add_argument(
         "--disarchive-db-url",
         type=str,
         default="https://disarchive.guix.gnu.org",
@@ -556,6 +562,7 @@ def _run_check_command(args: argparse.Namespace) -> int:
                         on_log=on_log,
                         swh_identify_timeout=args.swh_identify_timeout,
                         disarchive_timeout=args.disarchive_timeout,
+                        unpack_timeout=args.unpack_timeout,
                         disarchive_db_url=args.disarchive_db_url,
                         skip_disarchive=args.skip_disarchive,
                         cache=cache,
