@@ -60,7 +60,6 @@ def _build_parser() -> argparse.ArgumentParser:
     archive_parser = subparsers.add_parser(
         "request",
         help="request the archiving of unknown FOD origins on Software Heritage",
-        aliases=["request-archiving"],
     )
     archive_parser.add_argument(
         "installable",
@@ -110,7 +109,6 @@ def _build_parser() -> argparse.ArgumentParser:
     generate_parser = subparsers.add_parser(
         "generate",
         help="generate a Nix expression with SWH-backed FODs from a checkpoint",
-        aliases=["generate-swh-fods"],
     )
     generate_parser.add_argument(
         "installable",
@@ -145,7 +143,6 @@ def _build_parser() -> argparse.ArgumentParser:
     cook_parser = subparsers.add_parser(
         "cook",
         help="request cooking of Software Heritage vault flat archives for known FODs",
-        aliases=["cook-swh-fods"],
     )
     cook_parser.add_argument(
         "input",
@@ -182,7 +179,6 @@ def _build_parser() -> argparse.ArgumentParser:
     build_parser = subparsers.add_parser(
         "build",
         help="generate SWH-backed FODs and build them",
-        aliases=["build-swh-fods"],
     )
     build_parser.add_argument(
         "input",
@@ -374,7 +370,7 @@ def _validate_args(
                 joined = " and ".join(retry_flags)
                 _exit_usage(parser, f"{joined} require a checkpoint")
 
-    if args.command in ("request", "request-archiving", "generate", "generate-swh-fods"):
+    if args.command in ("request", "generate"):
         if args.json_input and args.checkpoint_file:
             _exit_usage(
                 parser,
@@ -385,20 +381,20 @@ def _validate_args(
                 parser,
                 "<installable> cannot be combined with -i/--json-input",
             )
-        if args.command in ("generate", "generate-swh-fods") and not args.json_input and not args.installable:
+        if args.command == "generate" and not args.json_input and not args.installable:
             _exit_usage(
                 parser,
                 "either an installable or -i/--json-input is required",
             )
 
-    if args.command in ("cook", "cook-swh-fods", "build", "build-swh-fods"):
+    if args.command in ("cook", "build"):
         if _is_nix_file(args.input) and args.checkpoint_file:
             _exit_usage(
                 parser,
                 "--checkpoint-file cannot be used when <input> is a .nix file",
             )
 
-    if args.command in ("build", "build-swh-fods"):
+    if args.command == "build":
         if _is_nix_file(args.input) and args.output:
             _exit_usage(
                 parser,
@@ -1164,16 +1160,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = _validate_args(parser.parse_args(argv), parser)
 
-    if args.command in ("request", "request-archiving"):
+    if args.command == "request":
         return _run_request_archiving_command(args)
 
-    if args.command in ("generate", "generate-swh-fods"):
+    if args.command == "generate":
         return _run_generate_command(args)
 
-    if args.command in ("cook", "cook-swh-fods"):
+    if args.command == "cook":
         return _run_cook_swh_fods_command(args)
 
-    if args.command in ("build", "build-swh-fods"):
+    if args.command == "build":
         return _run_build_swh_fods_command(args)
 
     return _run_check_command(args)
