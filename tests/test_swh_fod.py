@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from nix_fod_swh_checker.models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
-from nix_fod_swh_checker.swh_fod import (
+from nix_archive_src.models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
+from nix_archive_src.swh_fod import (
     SWHFodExpression,
     cache_warmer_derivation,
     swh_fod_expression,

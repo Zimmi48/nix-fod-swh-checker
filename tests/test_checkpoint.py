@@ -1,11 +1,11 @@
 from pathlib import Path
 
-from nix_fod_swh_checker.checkpoint import (
+from nix_archive_src.checkpoint import (
     default_checkpoint_path,
     load_checkpoint,
     save_checkpoint,
 )
-from nix_fod_swh_checker.models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
+from nix_archive_src.models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
 
 
 def make_result(**overrides):
@@ -81,4 +81,4 @@ def test_default_checkpoint_path_is_stable_and_namespaced(monkeypatch, tmp_path)
 
     assert path1 == path2
     assert path1 != path3
-    assert path1.parent == Path(tmp_path) / "nix-fod-swh-checker"
+    assert path1.parent == Path(tmp_path) / "nix-archive-src"

@@ -3,20 +3,20 @@ import time
 
 import pytest
 
-from nix_fod_swh_checker.cache import Cache, default_cache_path, DEFAULT_MISS_TTL_SECONDS
+from nix_archive_src.cache import Cache, default_cache_path, DEFAULT_MISS_TTL_SECONDS
 
 
 def test_default_cache_path_uses_xdg_cache_home(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     path = default_cache_path()
-    assert path == tmp_path / "nix-fod-swh-checker" / "cache.json"
+    assert path == tmp_path / "nix-archive-src" / "cache.json"
 
 
 def test_default_cache_path_falls_back_to_home(monkeypatch, tmp_path):
     monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     path = default_cache_path()
-    assert path == tmp_path / ".cache" / "nix-fod-swh-checker" / "cache.json"
+    assert path == tmp_path / ".cache" / "nix-archive-src" / "cache.json"
 
 
 def test_cache_hit_roundtrip(tmp_path):

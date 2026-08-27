@@ -1,8 +1,8 @@
 import pytest
 
-from nix_fod_swh_checker import cache as cache_module
-from nix_fod_swh_checker import checkpoint as checkpoint_module
-from nix_fod_swh_checker import cli as cli_module
+from nix_archive_src import cache as cache_module
+from nix_archive_src import checkpoint as checkpoint_module
+from nix_archive_src import cli as cli_module
 
 
 @pytest.fixture(autouse=True)

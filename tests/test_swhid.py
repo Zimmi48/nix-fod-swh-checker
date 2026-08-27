@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from nix_fod_swh_checker.swhid import SWHIdentifyError, compute_swhid
+from nix_archive_src.swhid import SWHIdentifyError, compute_swhid
 
 
 # Canonical SWHID for a file containing the bytes ``b"hello"`` as computed by
@@ -62,7 +62,7 @@ def test_compute_swhid_timeout(monkeypatch):
 
 
 def test_compute_swhid_caches_timeout_and_reuses_it(monkeypatch, tmp_path):
-    from nix_fod_swh_checker.cache import Cache
+    from nix_archive_src.cache import Cache
 
     calls = []
 
@@ -91,7 +91,7 @@ def test_compute_swhid_caches_timeout_and_reuses_it(monkeypatch, tmp_path):
 
 
 def test_compute_swhid_ignores_cached_timeout_when_timeout_increased(monkeypatch, tmp_path):
-    from nix_fod_swh_checker.cache import Cache
+    from nix_archive_src.cache import Cache
 
     calls = []
 
@@ -116,7 +116,7 @@ def test_compute_swhid_ignores_cached_timeout_when_timeout_increased(monkeypatch
 
 
 def test_compute_swhid_retry_flags_ignore_cached_timeout(monkeypatch, tmp_path):
-    from nix_fod_swh_checker.cache import Cache
+    from nix_archive_src.cache import Cache
 
     calls = []
 

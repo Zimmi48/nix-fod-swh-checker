@@ -1,7 +1,7 @@
 import pytest
 import requests
 
-from nix_fod_swh_checker.swh import SWHClient, SWHError, VaultCookingError
+from nix_archive_src.swh import SWHClient, SWHError, VaultCookingError
 
 
 class FakeResponse:

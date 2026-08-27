@@ -802,7 +802,7 @@ def _looks_like_tar(suffixes: list[str], lowered_name: str) -> bool:
 
 
 def _unpack_tar(archive_path: str, *, timeout: float = 30.0) -> str:
-    out_dir = tempfile.mkdtemp(prefix="nix-fod-swh-checker-tar-")
+    out_dir = tempfile.mkdtemp(prefix="nix-archive-src-tar-")
     try:
         script = (
             "import sys, tarfile\n"
@@ -834,7 +834,7 @@ def _unpack_tar(archive_path: str, *, timeout: float = 30.0) -> str:
 
 
 def _unpack_zip(archive_path: str, *, timeout: float = 30.0) -> str:
-    out_dir = tempfile.mkdtemp(prefix="nix-fod-swh-checker-zip-")
+    out_dir = tempfile.mkdtemp(prefix="nix-archive-src-zip-")
     try:
         script = (
             "import sys, zipfile\n"

@@ -4,11 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from nix_fod_swh_checker.cache import Cache
-from nix_fod_swh_checker.disarchive import disassemble_archive
-from nix_fod_swh_checker.models import FixedOutputDerivation
-from nix_fod_swh_checker.swh import SWHClient
-from nix_fod_swh_checker.swhid import compute_swhid
+from nix_archive_src.cache import Cache
+from nix_archive_src.disarchive import disassemble_archive
+from nix_archive_src.models import FixedOutputDerivation
+from nix_archive_src.swh import SWHClient
+from nix_archive_src.swhid import compute_swhid
 
 
 def _make_tar_archive(tmp_path, entries, suffix=".tar.gz"):
@@ -133,8 +133,8 @@ def test_disassemble_archive_caches_result(tmp_path):
 
 
 def test_disarchive_database_uses_cached_spec(monkeypatch, tmp_path):
-    from nix_fod_swh_checker import disarchive as disarchive_module
-    from nix_fod_swh_checker.disarchive import try_disarchive
+    from nix_archive_src import disarchive as disarchive_module
+    from nix_archive_src.disarchive import try_disarchive
 
     archive = _make_tar_archive(tmp_path, [("src/file.txt", "hello")])
     fod = FixedOutputDerivation(

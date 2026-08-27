@@ -4,8 +4,8 @@ import subprocess
 
 import pytest
 
-from nix_fod_swh_checker.models import FixedOutputDerivation
-from nix_fod_swh_checker.nix import (
+from nix_archive_src.models import FixedOutputDerivation
+from nix_archive_src.nix import (
     DryRunPlan,
     NixCommandError,
     _last_store_path,
@@ -667,7 +667,7 @@ def test_dry_run_nix_file_passes_extra_args(monkeypatch):
 
 
 def test_eval_nix_file_outputs_parses_json(monkeypatch):
-    from nix_fod_swh_checker.cli import _eval_nix_file_outputs
+    from nix_archive_src.cli import _eval_nix_file_outputs
 
     def fake_run(cmd, check, capture_output, text):
         assert cmd[:5] == ["nix", "eval", "--json", "-f", "fods.nix"]
@@ -678,7 +678,7 @@ def test_eval_nix_file_outputs_parses_json(monkeypatch):
 
 
 def test_eval_nix_file_outputs_command_error(monkeypatch):
-    from nix_fod_swh_checker.cli import _eval_nix_file_outputs
+    from nix_archive_src.cli import _eval_nix_file_outputs
 
     def fake_run(cmd, check, capture_output, text):
         raise subprocess.CalledProcessError(1, cmd, stderr="error: syntax error")

@@ -2,10 +2,10 @@ import json
 
 import pytest
 
-from nix_fod_swh_checker import cli
-from nix_fod_swh_checker.cli import _print_report, _result_to_dict
-from nix_fod_swh_checker.models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
-from nix_fod_swh_checker.nix import DryRunPlan
+from nix_archive_src import cli
+from nix_archive_src.cli import _print_report, _result_to_dict
+from nix_archive_src.models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
+from nix_archive_src.nix import DryRunPlan
 
 
 class _NullContextClient:
@@ -294,7 +294,7 @@ def test_check_resumes_from_existing_checkpoint(monkeypatch, capsys, tmp_path):
         fod=fod_a, known=True, method=SWHLookupMethod.CONTENT_HASH, detail="known"
     )
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(checkpoint, "nixpkgs#hello", {fod_a.label: existing})
 
@@ -323,7 +323,7 @@ def test_check_retry_unknown_rechecks_unknown_fods(monkeypatch, capsys, tmp_path
     fod_unknown = _fod("unknown")
     fod_undetermined = _fod("undetermined")
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(
         checkpoint,
@@ -389,7 +389,7 @@ def test_check_retry_undetermined_rechecks_undetermined_fods(monkeypatch, capsys
     fod_unknown = _fod("unknown")
     fod_undetermined = _fod("undetermined")
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(
         checkpoint,
@@ -529,7 +529,7 @@ def test_cook_swh_fods_with_no_vault_needs_returns_early(capsys, tmp_path):
         swhid="swh:1:cnt:" + "b" * 40,
     )
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
 
@@ -551,7 +551,7 @@ def test_cook_swh_fods_requests_cooking_and_exits(monkeypatch, capsys, tmp_path)
         swhid=dir_swhid,
     )
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
 
@@ -617,7 +617,7 @@ def test_cook_swh_fods_reports_cooking_error(monkeypatch, capsys, tmp_path):
         swhid=dir_swhid,
     )
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
 
@@ -659,7 +659,7 @@ def test_build_swh_fods_with_no_known_fods_returns_early(capsys, tmp_path):
         detail="not known",
     )
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
 
@@ -691,7 +691,7 @@ def test_build_swh_fods_builds_generated_expression(monkeypatch, capsys, tmp_pat
         swhid=dir_swhid,
     )
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
 
@@ -810,7 +810,7 @@ def test_request_archiving_dry_run_lists_unknown_origins(capsys, tmp_path):
     fod_undetermined.origin_urls = ["https://example.com/undetermined.tar.gz"]
 
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(
         checkpoint,
@@ -868,7 +868,7 @@ def test_request_archiving_submits_requests_for_unknown_origins(monkeypatch, cap
     fod = _fod("a")
     fod.origin_urls = ["https://example.com/archive.tar.gz"]
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(
         checkpoint,
@@ -981,7 +981,7 @@ def test_request_archiving_warns_when_no_origin_urls(capsys, tmp_path):
     fod = _fod("a")
     fod.origin_urls = []
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(
         checkpoint,
@@ -1012,7 +1012,7 @@ def test_request_archiving_skips_undetermined_results(monkeypatch, capsys, tmp_p
     fod_undetermined = _fod("undetermined")
     fod_undetermined.origin_urls = ["https://example.com/undetermined.tar.gz"]
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(
         checkpoint,
@@ -1081,7 +1081,7 @@ def test_request_archiving_warns_when_all_urls_unreachable(monkeypatch, capsys, 
     fod = _fod("a")
     fod.origin_urls = ["https://example.com/dead.tar.gz"]
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(
         checkpoint,
@@ -1112,7 +1112,7 @@ def test_request_archiving_selects_first_live_url(monkeypatch, capsys, tmp_path)
     fod = _fod("a")
     fod.origin_urls = ["https://example.com/dead.tar.gz", "https://example.com/live.tar.gz"]
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(
         checkpoint,
@@ -1167,7 +1167,7 @@ def test_request_archiving_handles_keyboard_interrupt(monkeypatch, capsys, tmp_p
     fod = _fod("a")
     fod.origin_urls = ["https://example.com/archive.tar.gz"]
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(
         checkpoint,
@@ -1209,7 +1209,7 @@ def test_request_archiving_reports_api_error_per_origin(monkeypatch, capsys, tmp
     fod = _fod("a")
     fod.origin_urls = ["https://example.com/archive.tar.gz"]
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(
         checkpoint,
@@ -1256,7 +1256,7 @@ def test_build_swh_fods_reports_nix_build_error(monkeypatch, capsys, tmp_path):
         swhid=dir_swhid,
     )
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
 
@@ -1569,7 +1569,7 @@ def test_generate_swh_fods_reads_default_checkpoint(monkeypatch, capsys, tmp_pat
         swhid="swh:1:cnt:" + "b" * 40,
     )
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
 
@@ -1611,11 +1611,11 @@ def test_generate_swh_fods_warns_and_skips_inexpressible_results(monkeypatch, ca
         swhid="swh:1:cnt:" + "b" * 40,
     )
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
 
-    import nix_fod_swh_checker.swh_fod as swh_fod_module
+    import nix_archive_src.swh_fod as swh_fod_module
 
     monkeypatch.setattr(swh_fod_module, "swh_fod_expression", lambda r: None)
 
@@ -1639,7 +1639,7 @@ def test_generate_swh_fods_warns_via_write_swh_fods_nix(monkeypatch, capsys, tmp
         swhid="swh:1:cnt:" + "b" * 40,
     )
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
 
@@ -1907,7 +1907,7 @@ def test_request_archiving_dry_run_skips_file_urls(capsys, tmp_path):
     ]
 
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(
         checkpoint,
@@ -1960,7 +1960,7 @@ def test_request_archiving_skips_live_file_urls(monkeypatch, capsys, tmp_path):
     fod = _fod("a")
     fod.origin_urls = ["https://example.com/fix.patch"]
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(
         checkpoint,

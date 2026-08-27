@@ -1,4 +1,4 @@
-"""Command line interface for nix-fod-swh-checker."""
+"""Command line interface for nix-archive-src."""
 from __future__ import annotations
 
 import argparse
@@ -38,11 +38,10 @@ def _status_label(result: SWHCheckResult) -> str:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="nix-fod-swh-check",
+        prog="nix-archive-src",
         description=(
-            "List every fixed-output derivation (FOD) reachable from a Nix "
-            "attribute and check whether its source is already archived on "
-            "Software Heritage."
+            "Check whether Nix sources are archived on Software Heritage "
+            "and generate alternative derivations using those archives."
         ),
     )
     subparsers = parser.add_subparsers(
@@ -59,8 +58,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     archive_parser = subparsers.add_parser(
-        "request-archiving",
+        "request",
         help="request the archiving of unknown FOD origins on Software Heritage",
+        aliases=["request-archiving"],
     )
     archive_parser.add_argument(
         "installable",
@@ -77,7 +77,7 @@ def _build_parser() -> argparse.ArgumentParser:
     archive_parser.add_argument(
         "--checkpoint-file",
         default=None,
-        help="checkpoint to read results from (default: a per-installable file under $XDG_CACHE_HOME/nix-fod-swh-checker/)",
+        help="checkpoint to read results from (default: a per-installable file under $XDG_CACHE_HOME/nix-archive-src/)",
     )
     archive_parser.add_argument(
         "--dry-run",
@@ -108,8 +108,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     generate_parser = subparsers.add_parser(
-        "generate-swh-fods",
+        "generate",
         help="generate a Nix expression with SWH-backed FODs from a checkpoint",
+        aliases=["generate-swh-fods"],
     )
     generate_parser.add_argument(
         "installable",
@@ -126,7 +127,7 @@ def _build_parser() -> argparse.ArgumentParser:
     generate_parser.add_argument(
         "--checkpoint-file",
         default=None,
-        help="checkpoint to read results from (default: a per-installable file under $XDG_CACHE_HOME/nix-fod-swh-checker/)",
+        help="checkpoint to read results from (default: a per-installable file under $XDG_CACHE_HOME/nix-archive-src/)",
     )
     generate_parser.add_argument(
         "--json-input",
@@ -142,8 +143,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     cook_parser = subparsers.add_parser(
-        "cook-swh-fods",
+        "cook",
         help="request cooking of Software Heritage vault flat archives for known FODs",
+        aliases=["cook-swh-fods"],
     )
     cook_parser.add_argument(
         "input",
@@ -152,7 +154,7 @@ def _build_parser() -> argparse.ArgumentParser:
     cook_parser.add_argument(
         "--checkpoint-file",
         default=None,
-        help="checkpoint to read results from (default: a per-installable file under $XDG_CACHE_HOME/nix-fod-swh-checker/)",
+        help="checkpoint to read results from (default: a per-installable file under $XDG_CACHE_HOME/nix-archive-src/)",
     )
     cook_parser.add_argument(
         "--swh-api-url",
@@ -178,8 +180,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     build_parser = subparsers.add_parser(
-        "build-swh-fods",
+        "build",
         help="generate SWH-backed FODs and build them",
+        aliases=["build-swh-fods"],
     )
     build_parser.add_argument(
         "input",
@@ -194,7 +197,7 @@ def _build_parser() -> argparse.ArgumentParser:
     build_parser.add_argument(
         "--checkpoint-file",
         default=None,
-        help="checkpoint to read results from (default: a per-installable file under $XDG_CACHE_HOME/nix-fod-swh-checker/)",
+        help="checkpoint to read results from (default: a per-installable file under $XDG_CACHE_HOME/nix-archive-src/)",
     )
     build_parser.add_argument(
         "--nix-build-arg",
@@ -307,7 +310,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "path to a JSON file used to save results as FODs are checked, so an "
             "interrupted run can resume without re-checking them (default: a "
-            "per-installable file under $XDG_CACHE_HOME/nix-fod-swh-checker/)"
+            "per-installable file under $XDG_CACHE_HOME/nix-archive-src/)"
         ),
     )
     check_parser.add_argument(
@@ -320,7 +323,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "path to the shared cache file used to avoid repeated API requests "
-            "and tool runs (default: a file under $XDG_CACHE_HOME/nix-fod-swh-checker/)"
+            "and tool runs (default: a file under $XDG_CACHE_HOME/nix-archive-src/)"
         ),
     )
     check_parser.add_argument(
@@ -371,7 +374,7 @@ def _validate_args(
                 joined = " and ".join(retry_flags)
                 _exit_usage(parser, f"{joined} require a checkpoint")
 
-    if args.command in ("request-archiving", "generate-swh-fods"):
+    if args.command in ("request", "request-archiving", "generate", "generate-swh-fods"):
         if args.json_input and args.checkpoint_file:
             _exit_usage(
                 parser,
@@ -382,20 +385,20 @@ def _validate_args(
                 parser,
                 "<installable> cannot be combined with -i/--json-input",
             )
-        if args.command == "generate-swh-fods" and not args.json_input and not args.installable:
+        if args.command in ("generate", "generate-swh-fods") and not args.json_input and not args.installable:
             _exit_usage(
                 parser,
                 "either an installable or -i/--json-input is required",
             )
 
-    if args.command in ("cook-swh-fods", "build-swh-fods"):
+    if args.command in ("cook", "cook-swh-fods", "build", "build-swh-fods"):
         if _is_nix_file(args.input) and args.checkpoint_file:
             _exit_usage(
                 parser,
                 "--checkpoint-file cannot be used when <input> is a .nix file",
             )
 
-    if args.command == "build-swh-fods":
+    if args.command in ("build", "build-swh-fods"):
         if _is_nix_file(args.input) and args.output:
             _exit_usage(
                 parser,
@@ -607,7 +610,7 @@ def _run_generate_command(args: argparse.Namespace) -> int:
         if not results:
             print(
                 f"error: no check results found in {args.json_input}; "
-                "run 'nix-fod-swh-check check <installable> -o <file>' first",
+                "run 'nix-archive-src check <installable> -o <file>' first",
                 file=sys.stderr,
             )
             return 1
@@ -621,7 +624,7 @@ def _run_generate_command(args: argparse.Namespace) -> int:
         if not checked:
             print(
                 f"error: no checkpoint found at {checkpoint_path}; "
-                "run 'nix-fod-swh-check check <installable>' first",
+                "run 'nix-archive-src check <installable>' first",
                 file=sys.stderr,
             )
             return 1
@@ -691,7 +694,7 @@ def _load_results_for_build(args: argparse.Namespace) -> list[SWHCheckResult] | 
     if not checked:
         print(
             f"error: no checkpoint found at {checkpoint_path}; "
-            "run 'nix-fod-swh-check check <installable>' first, "
+            "run 'nix-archive-src check <installable>' first, "
             "or pass a generated swh-backed-fods.nix file",
             file=sys.stderr,
         )
@@ -866,7 +869,7 @@ def _run_request_archiving_command(args: argparse.Namespace) -> int:
         if not results:
             print(
                 f"error: no check results found in {args.json_input}; "
-                "run 'nix-fod-swh-check check <installable> -o <file>' first",
+                "run 'nix-archive-src check <installable> -o <file>' first",
                 file=sys.stderr,
             )
             return 1
@@ -880,7 +883,7 @@ def _run_request_archiving_command(args: argparse.Namespace) -> int:
         if not checked:
             print(
                 f"error: no checkpoint found at {checkpoint_path}; "
-                "run 'nix-fod-swh-check check <installable>' first",
+                "run 'nix-archive-src check <installable>' first",
                 file=sys.stderr,
             )
             return 1
@@ -1161,16 +1164,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = _validate_args(parser.parse_args(argv), parser)
 
-    if args.command == "request-archiving":
+    if args.command in ("request", "request-archiving"):
         return _run_request_archiving_command(args)
 
-    if args.command == "generate-swh-fods":
+    if args.command in ("generate", "generate-swh-fods"):
         return _run_generate_command(args)
 
-    if args.command == "cook-swh-fods":
+    if args.command in ("cook", "cook-swh-fods"):
         return _run_cook_swh_fods_command(args)
 
-    if args.command == "build-swh-fods":
+    if args.command in ("build", "build-swh-fods"):
         return _run_build_swh_fods_command(args)
 
     return _run_check_command(args)
