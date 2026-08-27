@@ -1732,6 +1732,52 @@ def test_build_swh_fods_passes_extra_nix_build_args(monkeypatch, capsys, tmp_pat
     ]
 
 
+def test_build_swh_fods_passes_max_jobs_and_cores(monkeypatch, capsys, tmp_path):
+    nix_file = tmp_path / "swh-backed-fods.nix"
+    nix_file.write_text('{ pkgs ? {} }: { "a" = builtins.fetchurl { url = "u"; }; }\n')
+
+    built = []
+    dry_run_calls = []
+
+    def fake_build_nix_file(path, attrs=None, **kwargs):
+        built.append((path, attrs, kwargs))
+
+    def fake_dry_run_nix_file(path, attrs, **kwargs):
+        dry_run_calls.append((path, attrs, kwargs))
+        return DryRunPlan(plan=[], will_build=set(), will_fetch=set())
+
+    monkeypatch.setattr(cli, "build_nix_file", fake_build_nix_file)
+    monkeypatch.setattr(cli, "dry_run_nix_file", fake_dry_run_nix_file)
+    monkeypatch.setattr(cli, "_list_attrs_in_nix_file", lambda path: ["a"])
+    monkeypatch.setattr(
+        cli, "_eval_nix_file_outputs", lambda path: {"a": "/nix/store/out-a"}
+    )
+    monkeypatch.setattr(cli, "_extract_vault_swhids_by_attr", lambda path: {})
+    monkeypatch.setattr(cli.os.path, "exists", lambda path: False)
+
+    exit_code = cli.main(
+        [
+            "build-swh-fods",
+            str(nix_file),
+            "--quiet",
+            "--max-jobs",
+            "1",
+            "--cores",
+            "2",
+        ]
+    )
+    assert exit_code == 0
+    assert built == [
+        (
+            str(nix_file),
+            ["a"],
+            {"extra_args": ["--max-jobs", "1", "--cores", "2"], "on_log": None},
+        )
+    ]
+    # --max-jobs and --cores only affect the real build, not the dry run.
+    assert dry_run_calls[0][2]["extra_args"] == []
+
+
 def test_build_swh_fods_reports_dry_run_failure(monkeypatch, capsys, tmp_path):
     nix_file = tmp_path / "swh-backed-fods.nix"
     nix_file.write_text('{ pkgs ? {} }: { "a" = builtins.fetchurl { url = "u"; }; }\n')
