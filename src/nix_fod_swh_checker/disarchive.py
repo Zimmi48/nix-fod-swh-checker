@@ -26,6 +26,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import zipfile
@@ -80,6 +81,7 @@ def try_disarchive(
     disarchive_binary: str = "disarchive",
     swh_identify_timeout: float = 30.0,
     disarchive_timeout: float = 30.0,
+    unpack_timeout: float = 30.0,
     disarchive_db_url: str = _DISARCHIVE_DB_URL,
     skip_disarchive: bool = False,
     cache: Cache | None = None,
@@ -130,6 +132,7 @@ def try_disarchive(
         disarchive_binary=disarchive_binary,
         swh_identify_timeout=swh_identify_timeout,
         disarchive_timeout=disarchive_timeout,
+        unpack_timeout=unpack_timeout,
         db_spec=db_spec,
         db_top_dir=db_top_dir,
         cache=cache,
@@ -300,6 +303,7 @@ def _try_disarchive_local(
     disarchive_binary: str = "disarchive",
     swh_identify_timeout: float = 30.0,
     disarchive_timeout: float = 30.0,
+    unpack_timeout: float = 30.0,
     db_spec: str | None = None,
     db_top_dir: str | None = None,
     cache: Cache | None = None,
@@ -357,7 +361,22 @@ def _try_disarchive_local(
         on_log(f"unpacking {archive_path} to compute its directory SWHID...")
 
     try:
-        unpacked_path = unpack_archive(archive_path)
+        unpacked_path = unpack_archive(
+            archive_path,
+            timeout=unpack_timeout,
+            cache=cache,
+            cache_key=f"{cache_key_prefix or archive_path}:unpack",
+        )
+    except DisarchiveTimeoutError as exc:
+        if on_log:
+            on_log(f"unpacking {archive_path} timed out: {exc}")
+        return SWHCheckResult(
+            fod=fod,
+            known=None,
+            method=SWHLookupMethod.UNDETERMINED,
+            detail=f"unpacking {archive_path} timed out after {unpack_timeout}s",
+            origin_urls=fod.origin_urls,
+        )
     except DisarchiveError:
         return None
 
@@ -710,27 +729,62 @@ def disassemble_archive(
         _cleanup(spec_path)
 
 
-def unpack_archive(archive_path: str) -> str:
+def unpack_archive(
+    archive_path: str,
+    *,
+    timeout: float = 30.0,
+    cache: Cache | None = None,
+    cache_key: str | None = None,
+) -> str:
     """Unpack an archive to a temporary directory and return its path.
 
     Supports the archive formats handled by Nix's standard unpack phase:
     tarballs (including ``.tar.gz``, ``.tgz``, ``.tar.bz2``, ``.tar.xz``,
     ``.tar.lzma``) and zip files.
+
+    A timeout is applied because unpacking can hang indefinitely on some
+    archives (for example tar bombs or archives with deeply nested paths).
+    When the timeout is reached a :class:`DisarchiveTimeoutError` is raised.
     """
+    full_cache_key = f"tool:unpack:{cache_key}" if cache_key else None
+    if cache is not None and full_cache_key is not None:
+        cached = cache.get_tool_result(full_cache_key, timeout)
+        if cached is not None:
+            if cached.get("timed_out"):
+                raise DisarchiveTimeoutError(
+                    f"unpacking {archive_path} timed out after {cached['timeout']}s"
+                )
+
     path = Path(archive_path)
     suffixes = [s.lower() for s in path.suffixes]
     lowered_name = path.name.lower()
 
     if _looks_like_tar(suffixes, lowered_name):
         try:
-            return _unpack_tar(archive_path)
-        except (tarfile.TarError, OSError):
+            return _unpack_tar(archive_path, timeout=timeout)
+        except DisarchiveTimeoutError:
+            if cache is not None and full_cache_key is not None:
+                cache.set(
+                    full_cache_key,
+                    {"timed_out": True, "timeout": timeout},
+                    is_miss=True,
+                )
+            raise
+        except DisarchiveError:
             pass
 
     if ".zip" in suffixes or _is_zip(archive_path):
         try:
-            return _unpack_zip(archive_path)
-        except (zipfile.BadZipFile, OSError):
+            return _unpack_zip(archive_path, timeout=timeout)
+        except DisarchiveTimeoutError:
+            if cache is not None and full_cache_key is not None:
+                cache.set(
+                    full_cache_key,
+                    {"timed_out": True, "timeout": timeout},
+                    is_miss=True,
+                )
+            raise
+        except DisarchiveError:
             pass
 
     raise DisarchiveError(f"could not unpack {archive_path}")
@@ -747,31 +801,65 @@ def _looks_like_tar(suffixes: list[str], lowered_name: str) -> bool:
     return False
 
 
-def _unpack_tar(archive_path: str) -> str:
+def _unpack_tar(archive_path: str, *, timeout: float = 30.0) -> str:
     out_dir = tempfile.mkdtemp(prefix="nix-fod-swh-checker-tar-")
     try:
-        with tarfile.open(archive_path, "r:*") as tf:
-            try:
-                tf.extractall(out_dir, filter="data")
-            except TypeError:
-                # Python < 3.12 does not support the filter argument.
-                tf.extractall(out_dir)
+        script = (
+            "import sys, tarfile\n"
+            "with tarfile.open(sys.argv[1], 'r:*') as tf:\n"
+            "    try:\n"
+            "        tf.extractall(sys.argv[2], filter='data')\n"
+            "    except TypeError:\n"
+            "        tf.extractall(sys.argv[2])\n"
+        )
+        subprocess.run(
+            [sys.executable, "-c", script, archive_path, out_dir],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
         return out_dir
+    except subprocess.TimeoutExpired as exc:
+        _cleanup(out_dir)
+        raise DisarchiveTimeoutError(
+            f"unpacking {archive_path} timed out after {timeout}s"
+        ) from exc
+    except (subprocess.CalledProcessError, OSError) as exc:
+        _cleanup(out_dir)
+        raise DisarchiveError(f"could not unpack {archive_path}: {exc}") from exc
     except BaseException:
         _cleanup(out_dir)
         raise
 
 
-def _unpack_zip(archive_path: str) -> str:
+def _unpack_zip(archive_path: str, *, timeout: float = 30.0) -> str:
     out_dir = tempfile.mkdtemp(prefix="nix-fod-swh-checker-zip-")
     try:
-        with zipfile.ZipFile(archive_path, "r") as zf:
-            try:
-                zf.extractall(out_dir, filter="data")
-            except TypeError:
-                # Python < 3.12 does not support the filter argument.
-                zf.extractall(out_dir)
+        script = (
+            "import sys, zipfile\n"
+            "with zipfile.ZipFile(sys.argv[1], 'r') as zf:\n"
+            "    try:\n"
+            "        zf.extractall(sys.argv[2], filter='data')\n"
+            "    except TypeError:\n"
+            "        zf.extractall(sys.argv[2])\n"
+        )
+        subprocess.run(
+            [sys.executable, "-c", script, archive_path, out_dir],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
         return out_dir
+    except subprocess.TimeoutExpired as exc:
+        _cleanup(out_dir)
+        raise DisarchiveTimeoutError(
+            f"unpacking {archive_path} timed out after {timeout}s"
+        ) from exc
+    except (subprocess.CalledProcessError, OSError) as exc:
+        _cleanup(out_dir)
+        raise DisarchiveError(f"could not unpack {archive_path}: {exc}") from exc
     except BaseException:
         _cleanup(out_dir)
         raise

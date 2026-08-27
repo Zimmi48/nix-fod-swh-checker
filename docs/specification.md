@@ -68,6 +68,7 @@ If the checkpoint already contains results for some FODs, those FODs are skipped
 | `--min-delay` `<seconds>` | `1.0` | Minimum delay between anonymous Software Heritage API requests. No delay is inserted when authenticated. |
 | `--swh-identify-timeout` `<seconds>` | `30.0` | Timeout for the `swh identify` command when realising a FOD. |
 | `--disarchive-timeout` `<seconds>` | `30.0` | Timeout for the `disarchive disassemble` command when capturing an archive specification. |
+| `--unpack-timeout` `<seconds>` | `30.0` | Timeout for unpacking each archive when checking its contents locally. |
 | `--disarchive-db-url` `<url>` | `https://disarchive.guix.gnu.org` | Base URL of the GNU Guix disarchive database used to cache archive metadata. |
 | `--skip-disarchive` | false | Do not query the GNU Guix disarchive database; always realise archives locally to capture their specification. |
 

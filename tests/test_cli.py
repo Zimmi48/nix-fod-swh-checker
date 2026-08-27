@@ -450,6 +450,29 @@ def test_check_retry_undetermined_rechecks_undetermined_fods(monkeypatch, capsys
     assert saved["results"][fod_unknown.label]["known"] is False
 
 
+def test_check_passes_unpack_timeout_to_check_fod(monkeypatch, tmp_path):
+    fod = _fod("a")
+    passed = {}
+
+    def fake_check_fod(fod, client, **kwargs):
+        passed["unpack_timeout"] = kwargs.get("unpack_timeout")
+        return SWHCheckResult(
+            fod=fod, known=True, method=SWHLookupMethod.CONTENT_HASH, detail="known"
+        )
+
+    monkeypatch.setattr(cli, "show_derivations_recursive", lambda *a, **k: {})
+    monkeypatch.setattr(cli, "iter_fixed_output_derivations", lambda d: iter([fod]))
+    monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: _NullContextClient())
+    monkeypatch.setattr(cli, "check_fod", fake_check_fod)
+    monkeypatch.setattr(cli, "default_checkpoint_path", lambda installable: tmp_path / "ckpt.json")
+
+    exit_code = cli.main(
+        ["check", "nixpkgs#hello", "--quiet", "--no-checkpoint", "--unpack-timeout", "5.0"]
+    )
+    assert exit_code == 0
+    assert passed["unpack_timeout"] == 5.0
+
+
 def test_check_swh_error_in_loop_is_warning_not_fatal(monkeypatch, capsys, tmp_path):
     fod = _fod("a")
 
