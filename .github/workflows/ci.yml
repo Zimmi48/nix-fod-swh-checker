@@ -73,6 +73,7 @@ jobs:
           nix run .#nix-fod-swh-check -- check .#hello \
             -o check-results.json \
             --no-checkpoint \
+            --unpack-timeout 10 \
             --swh-identify-timeout 10 \
             --disarchive-timeout 10
 
@@ -81,6 +82,7 @@ jobs:
           start=$(date +%s)
           nix run .#nix-fod-swh-check -- check .#hello \
             --no-checkpoint \
+            --unpack-timeout 10 \
             --swh-identify-timeout 10 \
             --disarchive-timeout 10
           end=$(date +%s)
