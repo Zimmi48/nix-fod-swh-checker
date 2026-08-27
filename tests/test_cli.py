@@ -2,10 +2,10 @@ import json
 
 import pytest
 
-from nix_fod_swh_checker import cli
-from nix_fod_swh_checker.cli import _print_report, _result_to_dict
-from nix_fod_swh_checker.models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
-from nix_fod_swh_checker.nix import DryRunPlan
+from nix_archive_src import cli
+from nix_archive_src.cli import _print_report, _result_to_dict
+from nix_archive_src.models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
+from nix_archive_src.nix import DryRunPlan
 
 
 class _NullContextClient:
@@ -294,7 +294,7 @@ def test_check_resumes_from_existing_checkpoint(monkeypatch, capsys, tmp_path):
         fod=fod_a, known=True, method=SWHLookupMethod.CONTENT_HASH, detail="known"
     )
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(checkpoint, "nixpkgs#hello", {fod_a.label: existing})
 
@@ -323,7 +323,7 @@ def test_check_retry_unknown_rechecks_unknown_fods(monkeypatch, capsys, tmp_path
     fod_unknown = _fod("unknown")
     fod_undetermined = _fod("undetermined")
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(
         checkpoint,
@@ -389,7 +389,7 @@ def test_check_retry_undetermined_rechecks_undetermined_fods(monkeypatch, capsys
     fod_unknown = _fod("unknown")
     fod_undetermined = _fod("undetermined")
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(
         checkpoint,
@@ -513,7 +513,7 @@ def test_print_report_shows_known_after_disarchive_separately(capsys):
 def test_cook_swh_fods_without_checkpoint_returns_error(capsys, tmp_path):
     checkpoint = tmp_path / "missing.json"
     exit_code = cli.main(
-        ["cook-swh-fods", "nixpkgs#hello", "--checkpoint-file", str(checkpoint)]
+        ["cook", "nixpkgs#hello", "--checkpoint-file", str(checkpoint)]
     )
     err = capsys.readouterr().err
     assert exit_code == 1
@@ -529,12 +529,12 @@ def test_cook_swh_fods_with_no_vault_needs_returns_early(capsys, tmp_path):
         swhid="swh:1:cnt:" + "b" * 40,
     )
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
 
     exit_code = cli.main(
-        ["cook-swh-fods", "nixpkgs#hello", "--checkpoint-file", str(checkpoint), "--quiet"]
+        ["cook", "nixpkgs#hello", "--checkpoint-file", str(checkpoint), "--quiet"]
     )
     err = capsys.readouterr().err
     assert exit_code == 0
@@ -551,7 +551,7 @@ def test_cook_swh_fods_requests_cooking_and_exits(monkeypatch, capsys, tmp_path)
         swhid=dir_swhid,
     )
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
 
@@ -571,7 +571,7 @@ def test_cook_swh_fods_requests_cooking_and_exits(monkeypatch, capsys, tmp_path)
     monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: FakeClient())
 
     exit_code = cli.main(
-        ["cook-swh-fods", "nixpkgs#hello", "--checkpoint-file", str(checkpoint)]
+        ["cook", "nixpkgs#hello", "--checkpoint-file", str(checkpoint)]
     )
     err = capsys.readouterr().err
     assert exit_code == 0
@@ -601,7 +601,7 @@ def test_cook_swh_fods_from_nix_file(monkeypatch, capsys, tmp_path):
 
     monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: FakeClient())
 
-    exit_code = cli.main(["cook-swh-fods", str(nix_file), "--quiet"])
+    exit_code = cli.main(["cook", str(nix_file), "--quiet"])
     err = capsys.readouterr().err
     assert exit_code == 0
     assert cooked == [swhid]
@@ -617,7 +617,7 @@ def test_cook_swh_fods_reports_cooking_error(monkeypatch, capsys, tmp_path):
         swhid=dir_swhid,
     )
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
 
@@ -634,7 +634,7 @@ def test_cook_swh_fods_reports_cooking_error(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: FakeClient())
 
     exit_code = cli.main(
-        ["cook-swh-fods", "nixpkgs#hello", "--checkpoint-file", str(checkpoint), "--quiet"]
+        ["cook", "nixpkgs#hello", "--checkpoint-file", str(checkpoint), "--quiet"]
     )
     err = capsys.readouterr().err
     assert exit_code == 1
@@ -644,7 +644,7 @@ def test_cook_swh_fods_reports_cooking_error(monkeypatch, capsys, tmp_path):
 def test_build_swh_fods_without_checkpoint_returns_error(capsys, tmp_path):
     checkpoint = tmp_path / "missing.json"
     exit_code = cli.main(
-        ["build-swh-fods", "nixpkgs#hello", "--checkpoint-file", str(checkpoint)]
+        ["build", "nixpkgs#hello", "--checkpoint-file", str(checkpoint)]
     )
     err = capsys.readouterr().err
     assert exit_code == 1
@@ -659,14 +659,14 @@ def test_build_swh_fods_with_no_known_fods_returns_early(capsys, tmp_path):
         detail="not known",
     )
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
 
     output = tmp_path / "out.nix"
     exit_code = cli.main(
         [
-            "build-swh-fods",
+            "build",
             "nixpkgs#hello",
             "--checkpoint-file",
             str(checkpoint),
@@ -691,7 +691,7 @@ def test_build_swh_fods_builds_generated_expression(monkeypatch, capsys, tmp_pat
         swhid=dir_swhid,
     )
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
 
@@ -731,7 +731,7 @@ def test_build_swh_fods_builds_generated_expression(monkeypatch, capsys, tmp_pat
 
     exit_code = cli.main(
         [
-            "build-swh-fods",
+            "build",
             "nixpkgs#hello",
             "--checkpoint-file",
             str(checkpoint),
@@ -767,7 +767,7 @@ def test_build_swh_fods_from_nix_file(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(cli, "_extract_vault_swhids_by_attr", lambda path: {})
     monkeypatch.setattr(cli.os.path, "exists", lambda path: False)
 
-    exit_code = cli.main(["build-swh-fods", str(nix_file), "--quiet"])
+    exit_code = cli.main(["build", str(nix_file), "--quiet"])
     err = capsys.readouterr().err
     assert exit_code == 0
     assert built == [(str(nix_file), ["a"], {"extra_args": [], "on_log": None})]
@@ -775,7 +775,7 @@ def test_build_swh_fods_from_nix_file(monkeypatch, capsys, tmp_path):
 
 
 def test_request_archiving_without_input_returns_error(capsys):
-    exit_code = cli.main(["request-archiving"])
+    exit_code = cli.main(["request"])
     err = capsys.readouterr().err
     assert exit_code == 2
     assert "installable or -i/--json-input is required" in err
@@ -784,7 +784,7 @@ def test_request_archiving_without_input_returns_error(capsys):
 def test_request_archiving_without_checkpoint_returns_error(capsys, tmp_path):
     checkpoint = tmp_path / "missing.json"
     exit_code = cli.main(
-        ["request-archiving", "nixpkgs#hello", "--checkpoint-file", str(checkpoint)]
+        ["request", "nixpkgs#hello", "--checkpoint-file", str(checkpoint)]
     )
     err = capsys.readouterr().err
     assert exit_code == 1
@@ -810,7 +810,7 @@ def test_request_archiving_dry_run_lists_unknown_origins(capsys, tmp_path):
     fod_undetermined.origin_urls = ["https://example.com/undetermined.tar.gz"]
 
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(
         checkpoint,
@@ -849,7 +849,7 @@ def test_request_archiving_dry_run_lists_unknown_origins(capsys, tmp_path):
 
     exit_code = cli.main(
         [
-            "request-archiving",
+            "request",
             "nixpkgs#hello",
             "--checkpoint-file",
             str(checkpoint),
@@ -868,7 +868,7 @@ def test_request_archiving_submits_requests_for_unknown_origins(monkeypatch, cap
     fod = _fod("a")
     fod.origin_urls = ["https://example.com/archive.tar.gz"]
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(
         checkpoint,
@@ -911,7 +911,7 @@ def test_request_archiving_submits_requests_for_unknown_origins(monkeypatch, cap
     monkeypatch.setattr(cli, "_first_live_url", lambda urls, **kwargs: urls[0])
 
     exit_code = cli.main(
-        ["request-archiving", "nixpkgs#hello", "--checkpoint-file", str(checkpoint)]
+        ["request", "nixpkgs#hello", "--checkpoint-file", str(checkpoint)]
     )
     err = capsys.readouterr().err
     assert exit_code == 0
@@ -972,7 +972,7 @@ def test_request_archiving_from_json_input(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: FakeClient())
     monkeypatch.setattr(cli, "_first_live_url", lambda urls, **kwargs: urls[0])
 
-    exit_code = cli.main(["request-archiving", "-i", str(json_file)])
+    exit_code = cli.main(["request", "-i", str(json_file)])
     assert exit_code == 0
     assert requested == [("https://example.com/repo.git", "git")]
 
@@ -981,7 +981,7 @@ def test_request_archiving_warns_when_no_origin_urls(capsys, tmp_path):
     fod = _fod("a")
     fod.origin_urls = []
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(
         checkpoint,
@@ -998,7 +998,7 @@ def test_request_archiving_warns_when_no_origin_urls(capsys, tmp_path):
     )
 
     exit_code = cli.main(
-        ["request-archiving", "nixpkgs#hello", "--checkpoint-file", str(checkpoint), "--quiet"]
+        ["request", "nixpkgs#hello", "--checkpoint-file", str(checkpoint), "--quiet"]
     )
     err = capsys.readouterr().err
     assert exit_code == 0
@@ -1012,7 +1012,7 @@ def test_request_archiving_skips_undetermined_results(monkeypatch, capsys, tmp_p
     fod_undetermined = _fod("undetermined")
     fod_undetermined.origin_urls = ["https://example.com/undetermined.tar.gz"]
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(
         checkpoint,
@@ -1063,7 +1063,7 @@ def test_request_archiving_skips_undetermined_results(monkeypatch, capsys, tmp_p
 
     exit_code = cli.main(
         [
-            "request-archiving",
+            "request",
             "nixpkgs#hello",
             "--checkpoint-file",
             str(checkpoint),
@@ -1081,7 +1081,7 @@ def test_request_archiving_warns_when_all_urls_unreachable(monkeypatch, capsys, 
     fod = _fod("a")
     fod.origin_urls = ["https://example.com/dead.tar.gz"]
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(
         checkpoint,
@@ -1100,7 +1100,7 @@ def test_request_archiving_warns_when_all_urls_unreachable(monkeypatch, capsys, 
     monkeypatch.setattr(cli, "_first_live_url", lambda urls, **kwargs: None)
 
     exit_code = cli.main(
-        ["request-archiving", "nixpkgs#hello", "--checkpoint-file", str(checkpoint), "--quiet"]
+        ["request", "nixpkgs#hello", "--checkpoint-file", str(checkpoint), "--quiet"]
     )
     err = capsys.readouterr().err
     assert exit_code == 0
@@ -1112,7 +1112,7 @@ def test_request_archiving_selects_first_live_url(monkeypatch, capsys, tmp_path)
     fod = _fod("a")
     fod.origin_urls = ["https://example.com/dead.tar.gz", "https://example.com/live.tar.gz"]
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(
         checkpoint,
@@ -1157,7 +1157,7 @@ def test_request_archiving_selects_first_live_url(monkeypatch, capsys, tmp_path)
     )
 
     exit_code = cli.main(
-        ["request-archiving", "nixpkgs#hello", "--checkpoint-file", str(checkpoint), "--quiet"]
+        ["request", "nixpkgs#hello", "--checkpoint-file", str(checkpoint), "--quiet"]
     )
     assert exit_code == 0
     assert requested == ["https://example.com/live.tar.gz"]
@@ -1167,7 +1167,7 @@ def test_request_archiving_handles_keyboard_interrupt(monkeypatch, capsys, tmp_p
     fod = _fod("a")
     fod.origin_urls = ["https://example.com/archive.tar.gz"]
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(
         checkpoint,
@@ -1197,7 +1197,7 @@ def test_request_archiving_handles_keyboard_interrupt(monkeypatch, capsys, tmp_p
     monkeypatch.setattr(cli, "_first_live_url", lambda urls, **kwargs: urls[0])
 
     exit_code = cli.main(
-        ["request-archiving", "nixpkgs#hello", "--checkpoint-file", str(checkpoint)]
+        ["request", "nixpkgs#hello", "--checkpoint-file", str(checkpoint)]
     )
     err = capsys.readouterr().err
     assert exit_code == 130
@@ -1209,7 +1209,7 @@ def test_request_archiving_reports_api_error_per_origin(monkeypatch, capsys, tmp
     fod = _fod("a")
     fod.origin_urls = ["https://example.com/archive.tar.gz"]
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(
         checkpoint,
@@ -1239,7 +1239,7 @@ def test_request_archiving_reports_api_error_per_origin(monkeypatch, capsys, tmp
     monkeypatch.setattr(cli, "_first_live_url", lambda urls, **kwargs: urls[0])
 
     exit_code = cli.main(
-        ["request-archiving", "nixpkgs#hello", "--checkpoint-file", str(checkpoint), "--quiet"]
+        ["request", "nixpkgs#hello", "--checkpoint-file", str(checkpoint), "--quiet"]
     )
     err = capsys.readouterr().err
     assert exit_code == 0
@@ -1256,7 +1256,7 @@ def test_build_swh_fods_reports_nix_build_error(monkeypatch, capsys, tmp_path):
         swhid=dir_swhid,
     )
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
 
@@ -1280,7 +1280,7 @@ def test_build_swh_fods_reports_nix_build_error(monkeypatch, capsys, tmp_path):
     output = tmp_path / "out.nix"
     exit_code = cli.main(
         [
-            "build-swh-fods",
+            "build",
             "nixpkgs#hello",
             "--checkpoint-file",
             str(checkpoint),
@@ -1316,7 +1316,7 @@ def test_build_swh_fods_skips_already_present_paths(monkeypatch, capsys, tmp_pat
     monkeypatch.setattr(cli, "_extract_vault_swhids_by_attr", lambda path: {})
     monkeypatch.setattr(cli.os.path, "exists", lambda path: path == "/nix/store/out-a")
 
-    exit_code = cli.main(["build-swh-fods", str(nix_file), "--quiet"])
+    exit_code = cli.main(["build", str(nix_file), "--quiet"])
     err = capsys.readouterr().err
     assert exit_code == 0
     assert built == [(str(nix_file), ["b"], {"extra_args": [], "on_log": None})]
@@ -1388,12 +1388,12 @@ def test_build_swh_fods_skips_uncooked_vault_with_warning(monkeypatch, capsys, t
 
     monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: FakeClient())
 
-    exit_code = cli.main(["build-swh-fods", str(nix_file), "--quiet"])
+    exit_code = cli.main(["build", str(nix_file), "--quiet"])
     err = capsys.readouterr().err
     assert exit_code == 0
     assert "warning" in err
     assert "not cooked" in err
-    assert "cook-swh-fods" in err
+    assert "cook" in err
     assert built == [(str(nix_file), ["b"], {"extra_args": [], "on_log": None})]
 
 
@@ -1438,7 +1438,7 @@ def test_build_swh_fods_skips_vault_check_for_fetched_paths(monkeypatch, capsys,
 
     monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: FakeClient())
 
-    exit_code = cli.main(["build-swh-fods", str(nix_file), "--quiet"])
+    exit_code = cli.main(["build", str(nix_file), "--quiet"])
     err = capsys.readouterr().err
     assert exit_code == 0
 
@@ -1528,7 +1528,7 @@ def test_check_cache_file_option_is_used(monkeypatch, capsys, tmp_path):
 
 
 def test_generate_swh_fods_round_trips_json_input_with_label(monkeypatch, tmp_path):
-    """``generate-swh-fods -i`` must tolerate the redundant ``label`` field emitted by ``check --json``."""
+    """``generate -i`` must tolerate the redundant ``label`` field emitted by ``check --json``."""
     result = SWHCheckResult(
         fod=_fod("a"),
         known=True,
@@ -1549,7 +1549,7 @@ def test_generate_swh_fods_round_trips_json_input_with_label(monkeypatch, tmp_pa
 
     output = tmp_path / "swh-backed-fods.nix"
     exit_code = cli.main(
-        ["generate-swh-fods", "-i", str(results_json), "-o", str(output)]
+        ["generate", "-i", str(results_json), "-o", str(output)]
     )
 
     assert exit_code == 0
@@ -1569,7 +1569,7 @@ def test_generate_swh_fods_reads_default_checkpoint(monkeypatch, capsys, tmp_pat
         swhid="swh:1:cnt:" + "b" * 40,
     )
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
 
@@ -1582,7 +1582,7 @@ def test_generate_swh_fods_reads_default_checkpoint(monkeypatch, capsys, tmp_pat
     monkeypatch.setattr(cli, "default_checkpoint_path", lambda installable: checkpoint)
 
     output = tmp_path / "out.nix"
-    exit_code = cli.main(["generate-swh-fods", "nixpkgs#hello", "-o", str(output)])
+    exit_code = cli.main(["generate", "nixpkgs#hello", "-o", str(output)])
     assert exit_code == 0
     assert len(written) == 1
     assert written[0][0] == str(output)
@@ -1594,7 +1594,7 @@ def test_generate_swh_fods_empty_checkpoint_returns_error(capsys, tmp_path):
     checkpoint.write_text('{"installable": "nixpkgs#hello", "results": {}}')
 
     exit_code = cli.main(
-        ["generate-swh-fods", "nixpkgs#hello", "--checkpoint-file", str(checkpoint)]
+        ["generate", "nixpkgs#hello", "--checkpoint-file", str(checkpoint)]
     )
     err = capsys.readouterr().err
     assert exit_code == 1
@@ -1611,16 +1611,16 @@ def test_generate_swh_fods_warns_and_skips_inexpressible_results(monkeypatch, ca
         swhid="swh:1:cnt:" + "b" * 40,
     )
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
 
-    import nix_fod_swh_checker.swh_fod as swh_fod_module
+    import nix_archive_src.swh_fod as swh_fod_module
 
     monkeypatch.setattr(swh_fod_module, "swh_fod_expression", lambda r: None)
 
     exit_code = cli.main(
-        ["generate-swh-fods", "nixpkgs#hello", "--checkpoint-file", str(checkpoint)]
+        ["generate", "nixpkgs#hello", "--checkpoint-file", str(checkpoint)]
     )
     err = capsys.readouterr().err
     assert exit_code == 0
@@ -1639,7 +1639,7 @@ def test_generate_swh_fods_warns_via_write_swh_fods_nix(monkeypatch, capsys, tmp
         swhid="swh:1:cnt:" + "b" * 40,
     )
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(checkpoint, "nixpkgs#hello", {result.fod.label: result})
 
@@ -1654,7 +1654,7 @@ def test_generate_swh_fods_warns_via_write_swh_fods_nix(monkeypatch, capsys, tmp
     monkeypatch.setattr(cli, "write_swh_fods_nix", fake_write_swh_fods_nix)
 
     exit_code = cli.main(
-        ["generate-swh-fods", "nixpkgs#hello", "--checkpoint-file", str(checkpoint)]
+        ["generate", "nixpkgs#hello", "--checkpoint-file", str(checkpoint)]
     )
     err = capsys.readouterr().err
     assert exit_code == 0
@@ -1685,7 +1685,7 @@ def test_build_swh_fods_passes_no_substitute(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(cli, "_extract_vault_swhids_by_attr", lambda path: {})
     monkeypatch.setattr(cli.os.path, "exists", lambda path: False)
 
-    exit_code = cli.main(["build-swh-fods", str(nix_file), "--quiet", "--no-substitute"])
+    exit_code = cli.main(["build", str(nix_file), "--quiet", "--no-substitute"])
     err = capsys.readouterr().err
     assert exit_code == 0
     assert built == [(str(nix_file), ["a"], {"extra_args": ["--no-substitute"], "on_log": None})]
@@ -1718,7 +1718,7 @@ def test_build_swh_fods_passes_extra_nix_build_args(monkeypatch, capsys, tmp_pat
 
     exit_code = cli.main(
         [
-            "build-swh-fods",
+            "build",
             str(nix_file),
             "--quiet",
             "--nix-build-arg",
@@ -1745,7 +1745,7 @@ def test_build_swh_fods_reports_dry_run_failure(monkeypatch, capsys, tmp_path):
         cli, "_eval_nix_file_outputs", lambda path: {"a": "/nix/store/out-a"}
     )
 
-    exit_code = cli.main(["build-swh-fods", str(nix_file), "--quiet"])
+    exit_code = cli.main(["build", str(nix_file), "--quiet"])
     err = capsys.readouterr().err
     assert exit_code == 1
     assert "dry run failed" in err
@@ -1786,7 +1786,7 @@ def test_build_swh_fods_reports_swh_error_during_vault_check(monkeypatch, capsys
 
     monkeypatch.setattr(cli, "SWHClient", lambda **kwargs: FakeClient())
 
-    exit_code = cli.main(["build-swh-fods", str(nix_file), "--quiet"])
+    exit_code = cli.main(["build", str(nix_file), "--quiet"])
     err = capsys.readouterr().err
     assert exit_code == 1
     assert "API down" in err
@@ -1809,7 +1809,7 @@ def test_build_swh_fods_all_outputs_already_present(monkeypatch, capsys, tmp_pat
     )
     monkeypatch.setattr(cli.os.path, "exists", lambda path: path == "/nix/store/out-a")
 
-    exit_code = cli.main(["build-swh-fods", str(nix_file), "--quiet"])
+    exit_code = cli.main(["build", str(nix_file), "--quiet"])
     err = capsys.readouterr().err
     assert exit_code == 0
     assert "already in the Nix store" in err
@@ -1907,7 +1907,7 @@ def test_request_archiving_dry_run_skips_file_urls(capsys, tmp_path):
     ]
 
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(
         checkpoint,
@@ -1939,7 +1939,7 @@ def test_request_archiving_dry_run_skips_file_urls(capsys, tmp_path):
 
     exit_code = cli.main(
         [
-            "request-archiving",
+            "request",
             "nixpkgs#hello",
             "--checkpoint-file",
             str(checkpoint),
@@ -1960,7 +1960,7 @@ def test_request_archiving_skips_live_file_urls(monkeypatch, capsys, tmp_path):
     fod = _fod("a")
     fod.origin_urls = ["https://example.com/fix.patch"]
     checkpoint = tmp_path / "ckpt.json"
-    from nix_fod_swh_checker.checkpoint import save_checkpoint
+    from nix_archive_src.checkpoint import save_checkpoint
 
     save_checkpoint(
         checkpoint,
@@ -2003,7 +2003,7 @@ def test_request_archiving_skips_live_file_urls(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(cli, "_first_live_url", lambda urls, **kwargs: urls[0])
 
     exit_code = cli.main(
-        ["request-archiving", "nixpkgs#hello", "--checkpoint-file", str(checkpoint), "--quiet"]
+        ["request", "nixpkgs#hello", "--checkpoint-file", str(checkpoint), "--quiet"]
     )
     err = capsys.readouterr().err
     assert exit_code == 0
@@ -2045,28 +2045,28 @@ def test_check_retry_both_requires_checkpoint(capsys):
 
 def test_request_archiving_json_input_and_checkpoint_file_incompatible(capsys):
     with pytest.raises(SystemExit) as exc_info:
-        cli.main(["request-archiving", "-i", "/tmp/x.json", "--checkpoint-file", "/tmp/y.json"])
+        cli.main(["request", "-i", "/tmp/x.json", "--checkpoint-file", "/tmp/y.json"])
     assert exc_info.value.code == 2
     assert "mutually exclusive" in capsys.readouterr().err
 
 
 def test_request_archiving_installable_and_json_input_incompatible(capsys):
     with pytest.raises(SystemExit) as exc_info:
-        cli.main(["request-archiving", "nixpkgs#hello", "-i", "/tmp/x.json"])
+        cli.main(["request", "nixpkgs#hello", "-i", "/tmp/x.json"])
     assert exc_info.value.code == 2
     assert "cannot be combined with -i/--json-input" in capsys.readouterr().err
 
 
 def test_generate_swh_fods_json_input_and_checkpoint_file_incompatible(capsys):
     with pytest.raises(SystemExit) as exc_info:
-        cli.main(["generate-swh-fods", "nixpkgs#hello", "-i", "/tmp/x.json", "--checkpoint-file", "/tmp/y.json"])
+        cli.main(["generate", "nixpkgs#hello", "-i", "/tmp/x.json", "--checkpoint-file", "/tmp/y.json"])
     assert exc_info.value.code == 2
     assert "mutually exclusive" in capsys.readouterr().err
 
 
 def test_generate_swh_fods_installable_and_json_input_incompatible(capsys):
     with pytest.raises(SystemExit) as exc_info:
-        cli.main(["generate-swh-fods", "nixpkgs#hello", "-i", "/tmp/x.json"])
+        cli.main(["generate", "nixpkgs#hello", "-i", "/tmp/x.json"])
     assert exc_info.value.code == 2
     assert "cannot be combined with -i/--json-input" in capsys.readouterr().err
 
@@ -2075,7 +2075,7 @@ def test_cook_swh_fods_checkpoint_file_incompatible_with_nix_file(capsys, tmp_pa
     nix_file = tmp_path / "swh-backed-fods.nix"
     nix_file.write_text('{ pkgs ? {} }: {}\n')
     with pytest.raises(SystemExit) as exc_info:
-        cli.main(["cook-swh-fods", str(nix_file), "--checkpoint-file", str(tmp_path / "x.json")])
+        cli.main(["cook", str(nix_file), "--checkpoint-file", str(tmp_path / "x.json")])
     assert exc_info.value.code == 2
     assert "cannot be used when <input> is a .nix file" in capsys.readouterr().err
 
@@ -2084,7 +2084,7 @@ def test_build_swh_fods_checkpoint_file_incompatible_with_nix_file(capsys, tmp_p
     nix_file = tmp_path / "swh-backed-fods.nix"
     nix_file.write_text('{ pkgs ? {} }: {}\n')
     with pytest.raises(SystemExit) as exc_info:
-        cli.main(["build-swh-fods", str(nix_file), "--checkpoint-file", str(tmp_path / "x.json")])
+        cli.main(["build", str(nix_file), "--checkpoint-file", str(tmp_path / "x.json")])
     assert exc_info.value.code == 2
     assert "cannot be used when <input> is a .nix file" in capsys.readouterr().err
 
@@ -2093,6 +2093,6 @@ def test_build_swh_fods_output_incompatible_with_nix_file(capsys, tmp_path):
     nix_file = tmp_path / "swh-backed-fods.nix"
     nix_file.write_text('{ pkgs ? {} }: {}\n')
     with pytest.raises(SystemExit) as exc_info:
-        cli.main(["build-swh-fods", str(nix_file), "-o", str(tmp_path / "out.nix")])
+        cli.main(["build", str(nix_file), "-o", str(tmp_path / "out.nix")])
     assert exc_info.value.code == 2
     assert "-o/--output cannot be used when <input> is a .nix file" in capsys.readouterr().err

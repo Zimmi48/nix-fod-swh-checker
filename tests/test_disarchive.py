@@ -5,15 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from nix_fod_swh_checker import disarchive as disarchive_module
-from nix_fod_swh_checker.disarchive import (
+from nix_archive_src import disarchive as disarchive_module
+from nix_archive_src.disarchive import (
     DisarchiveError,
     DisarchiveTimeoutError,
     try_disarchive,
     unpack_archive,
 )
-from nix_fod_swh_checker.models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
-from nix_fod_swh_checker.nix import NixCommandError
+from nix_archive_src.models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
+from nix_archive_src.nix import NixCommandError
 
 
 # Directory SWHID for a tree containing a single file ``file.txt`` with the
@@ -456,7 +456,7 @@ def test_try_disarchive_caches_invalid_local_spec_as_miss(monkeypatch, tmp_path)
     """An invalid spec produced by local disarchive is cached as a miss."""
     import subprocess as subprocess_module
 
-    from nix_fod_swh_checker.cache import Cache
+    from nix_archive_src.cache import Cache
 
     archive = _make_tar_archive(tmp_path, [("src/file.txt", "hello")])
     cache = Cache(tmp_path / "cache.json")
@@ -508,7 +508,7 @@ def test_try_disarchive_caches_disarchive_timeout_as_miss(monkeypatch, tmp_path)
     """A disarchive timeout is cached as a miss and reused with lower timeouts."""
     import subprocess as subprocess_module
 
-    from nix_fod_swh_checker.cache import Cache
+    from nix_archive_src.cache import Cache
 
     archive = _make_tar_archive(tmp_path, [("src/file.txt", "hello")])
     cache = Cache(tmp_path / "cache.json")
@@ -555,7 +555,7 @@ def test_try_disarchive_ignores_cached_disarchive_timeout_when_increased(monkeyp
     """A cached disarchive timeout is ignored when the timeout is increased."""
     import subprocess as subprocess_module
 
-    from nix_fod_swh_checker.cache import Cache
+    from nix_archive_src.cache import Cache
 
     archive = _make_tar_archive(tmp_path, [("src/file.txt", "hello")])
     cache = Cache(tmp_path / "cache.json")
@@ -623,7 +623,7 @@ def test_unpack_archive_timeout_is_applied(monkeypatch, tmp_path):
 
 def test_unpack_archive_timeout_is_cached_as_miss(monkeypatch, tmp_path):
     """A timeout during unpacking is cached and reused with lower timeouts."""
-    from nix_fod_swh_checker.cache import Cache
+    from nix_archive_src.cache import Cache
 
     archive = _make_tar_archive(tmp_path, [("src/file.txt", "hello")])
     cache = Cache(tmp_path / "cache.json")
@@ -656,7 +656,7 @@ def test_unpack_archive_timeout_is_cached_as_miss(monkeypatch, tmp_path):
 
 def test_unpack_archive_ignores_cached_timeout_when_increased(monkeypatch, tmp_path):
     """A cached unpack timeout is ignored when the timeout is increased."""
-    from nix_fod_swh_checker.cache import Cache
+    from nix_archive_src.cache import Cache
 
     archive = _make_tar_archive(tmp_path, [("src/file.txt", "hello")])
     cache = Cache(tmp_path / "cache.json")
@@ -747,7 +747,7 @@ def _default_fod_cache_prefix(fod):
 
 def test_try_disarchive_local_uses_cache_to_skip_realisation(monkeypatch, tmp_path):
     """When the stripped SWHID and disarchive spec are cached, no realisation."""
-    from nix_fod_swh_checker.cache import Cache
+    from nix_archive_src.cache import Cache
 
     cache = Cache(tmp_path / "cache.json")
     fod = make_fod(output_path="/nix/store/cached-archive.tar.gz")
@@ -787,7 +787,7 @@ def test_try_disarchive_local_cache_unknown_stripped_swhid_skips_realisation(
     monkeypatch, tmp_path
 ):
     """A cached stripped SWHID that is not known lets us return UNKNOWN immediately."""
-    from nix_fod_swh_checker.cache import Cache
+    from nix_archive_src.cache import Cache
 
     cache = Cache(tmp_path / "cache.json")
     fod = make_fod(output_path="/nix/store/cached-archive.tar.gz")
@@ -817,7 +817,7 @@ def test_try_disarchive_local_cache_unknown_stripped_swhid_skips_realisation(
 
 def test_try_disarchive_local_cache_falls_back_to_output_path(monkeypatch, tmp_path):
     """When the FOD has no hash, the cache key falls back to the output path."""
-    from nix_fod_swh_checker.cache import Cache
+    from nix_archive_src.cache import Cache
 
     cache = Cache(tmp_path / "cache.json")
     output_path = "/nix/store/cached-archive.tar.gz"
@@ -847,7 +847,7 @@ def test_try_disarchive_local_cache_falls_back_to_output_path(monkeypatch, tmp_p
 
 def test_try_disarchive_local_cache_uses_hash_not_output_path(monkeypatch, tmp_path):
     """The cache key is based on the FOD hash, so the same content shares entries."""
-    from nix_fod_swh_checker.cache import Cache
+    from nix_archive_src.cache import Cache
 
     cache = Cache(tmp_path / "cache.json")
     # Populate the cache using one output path.

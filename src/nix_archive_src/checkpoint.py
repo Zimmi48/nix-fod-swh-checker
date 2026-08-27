@@ -27,7 +27,7 @@ def default_checkpoint_path(installable: str) -> Path:
         os.path.expanduser("~"), ".cache"
     )
     digest = hashlib.sha256(installable.encode()).hexdigest()[:16]
-    return Path(cache_home) / "nix-fod-swh-checker" / f"{digest}.json"
+    return Path(cache_home) / "nix-archive-src" / f"{digest}.json"
 
 
 def load_checkpoint(path: Path) -> dict[str, SWHCheckResult]:

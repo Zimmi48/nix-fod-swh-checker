@@ -29,7 +29,7 @@ def default_cache_path() -> Path:
     cache_home = os.environ.get("XDG_CACHE_HOME") or os.path.join(
         os.path.expanduser("~"), ".cache"
     )
-    return Path(cache_home) / "nix-fod-swh-checker" / "cache.json"
+    return Path(cache_home) / "nix-archive-src" / "cache.json"
 
 
 @dataclass

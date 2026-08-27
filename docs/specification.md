@@ -1,20 +1,20 @@
-# nix-fod-swh-checker specification
+# nix-archive-src specification
 
-This document is the authoritative user-facing reference for `nix-fod-swh-check`. It describes every subcommand, option, output format, exit code, and file format exactly as the current implementation behaves.
+This document is the authoritative user-facing reference for `nix-archive-src`. It describes every subcommand, option, output format, exit code, and file format exactly as the current implementation behaves.
 
 For a gentler introduction, see [README.md](../README.md). For implementation details, see [internals.md](internals.md).
 
 ## Invocation
 
 ```
-nix-fod-swh-check <subcommand> [options] <arguments>
+nix-archive-src <subcommand> [options] <arguments>
 ```
 
-The program is also exposed as the Python module `nix_fod_swh_checker.cli:main` and can be run with `python -m nix_fod_swh_checker`.
+The program is also exposed as the Python module `nix_archive_src.cli:main` and can be run with `python -m nix_archive_src`.
 
 A subcommand is required. Running without one prints a usage message and exits with code `2`.
 
-The available subcommands are: `check`, `request-archiving`, `generate-swh-fods`, `cook-swh-fods`, and `build-swh-fods`.
+The available subcommands are: `check`, `request`, `generate`, `cook`, and `build`.
 
 ## Global behavior
 
@@ -28,7 +28,7 @@ The available subcommands are: `check`, `request-archiving`, `generate-swh-fods`
 ### `check`
 
 ```
-nix-fod-swh-check check [options] <installable>
+nix-archive-src check [options] <installable>
 ```
 
 Discover every fixed-output derivation (FOD) reachable from `<installable>` and check whether each one is already archived on Software Heritage.
@@ -135,10 +135,10 @@ Unhandled exceptions propagate and produce a Python traceback.
 
 ---
 
-### `request-archiving`
+### `request`
 
 ```
-nix-fod-swh-check request-archiving [options] [<installable>]
+nix-archive-src request-archiving [options] [<installable>]
 ```
 
 Request the archiving of upstream origins for FODs that were not found on Software Heritage.
@@ -163,7 +163,7 @@ Use `--dry-run` to list the origins that would be requested without contacting S
 Origins are deduplicated by `(visit_type, url)` before any request is sent. If a request fails (for example because the origin is blocked), a warning is printed and the command continues with the remaining origins.
 FODs that are skipped are reported with a warning on stderr: because they have no `origin_urls`, because none of their URLs are reachable, or because their URL does not look like an archive (or git repository) and SWH has no `file` visit type.
 
-#### `request-archiving` options
+#### `request` options
 
 | Option | Default | Description |
 |--------|---------|-------------|
@@ -177,7 +177,7 @@ FODs that are skipped are reported with a warning on stderr: because they have n
 
 `-i`/`--json-input` is mutually exclusive with `<installable>` and `--checkpoint-file`. Provide either an installable (optionally with `--checkpoint-file`) or `-i`/`--json-input`.
 
-#### `request-archiving` exit codes
+#### `request` exit codes
 
 | Code | Meaning |
 |------|---------|
@@ -187,10 +187,10 @@ FODs that are skipped are reported with a warning on stderr: because they have n
 
 ---
 
-### `generate-swh-fods`
+### `generate`
 
 ```
-nix-fod-swh-check generate-swh-fods [options] [<installable>]
+nix-archive-src generate-swh-fods [options] [<installable>]
 ```
 
 Generate a Nix expression containing SWH-backed fixed-output derivations from previously checked results.
@@ -205,7 +205,7 @@ If a known result cannot be turned into an expression (for example, because its 
 
 The generated file evaluates to a function `{ pkgs ? <pinned-nixpkgs> }: { ... }` mapping safe attribute names to SWH-backed derivations. See [Generated Nix expression](internals.md#generated-nix-expression) for the exact format.
 
-#### `generate-swh-fods` options
+#### `generate` options
 
 | Option | Default | Description |
 |--------|---------|-------------|
@@ -217,7 +217,7 @@ The generated file evaluates to a function `{ pkgs ? <pinned-nixpkgs> }: { ... }
 `-i`/`--json-input` is mutually exclusive with `<installable>` and `--checkpoint-file`. Provide either an installable (optionally with `--checkpoint-file`) or `-i`/`--json-input`.
 
 
-#### `generate-swh-fods` exit codes
+#### `generate` exit codes
 
 | Code | Meaning |
 |------|---------|
@@ -227,10 +227,10 @@ The generated file evaluates to a function `{ pkgs ? <pinned-nixpkgs> }: { ... }
 
 ---
 
-### `cook-swh-fods`
+### `cook`
 
 ```
-nix-fod-swh-check cook-swh-fods [options] <input>
+nix-archive-src cook-swh-fods [options] <input>
 ```
 
 Request cooking of Software Heritage vault flat archives for directory SWHIDs required by the SWH-backed FODs.
@@ -242,9 +242,9 @@ Request cooking of Software Heritage vault flat archives for directory SWHIDs re
 
 For each directory SWHID (`swh:1:dir:...`) that is fetched via `/vault/flat/.../raw` in the generated expressions, the command checks whether a cooking task already exists and creates one if not. It then exits immediately; it does not wait for cooking to finish.
 
-When not `--quiet`, the command prints each SWHID along with the status of its cooking task (for example `new`, `pending`, `done`, or `failed`). This lets you see the current state of previously requested tasks and whether the `build-swh-fods` command may be run.
+When not `--quiet`, the command prints each SWHID along with the status of its cooking task (for example `new`, `pending`, `done`, or `failed`). This lets you see the current state of previously requested tasks and whether the `build` command may be run.
 
-#### `cook-swh-fods` options
+#### `cook` options
 
 | Option | Default | Description |
 |--------|---------|-------------|
@@ -254,7 +254,7 @@ When not `--quiet`, the command prints each SWHID along with the status of its c
 | `--min-delay` `<seconds>` | `1.0` | Minimum delay between anonymous API requests. |
 | `-q`, `--quiet` | false | Suppress stderr progress messages. |
 
-#### `cook-swh-fods` exit codes
+#### `cook` exit codes
 
 | Code | Meaning |
 |------|---------|
@@ -264,10 +264,10 @@ When not `--quiet`, the command prints each SWHID along with the status of its c
 
 ---
 
-### `build-swh-fods`
+### `build`
 
 ```
-nix-fod-swh-check build-swh-fods [options] <input>
+nix-archive-src build-swh-fods [options] <input>
 ```
 
 Generate a Nix expression with SWH-backed FODs and build the missing ones with `nix build`.
@@ -289,7 +289,7 @@ The command then:
 
 If all outputs are already in the store or only uncooked vault archives remain, the command reports this and exits `0` without building.
 
-#### `build-swh-fods` options
+#### `build` options
 
 | Option | Default | Description |
 |--------|---------|-------------|
@@ -302,7 +302,7 @@ If all outputs are already in the store or only uncooked vault archives remain, 
 | `--min-delay` `<seconds>` | `1.0` | Minimum delay between anonymous API requests. |
 | `-q`, `--quiet` | false | Suppress stderr progress messages. |
 
-#### `build-swh-fods` exit codes
+#### `build` exit codes
 
 | Code | Meaning |
 |------|---------|
@@ -314,14 +314,14 @@ If all outputs are already in the store or only uncooked vault archives remain, 
 
 ## Checkpoint file
 
-The checkpoint file is a JSON document used to resume interrupted `check` runs and to feed results into `generate-swh-fods`, `cook-swh-fods`, `build-swh-fods`, and `request-archiving`.
+The checkpoint file is a JSON document used to resume interrupted `check` runs and to feed results into `generate`, `cook`, `build`, and `request`.
 
 ### Default location
 
 The default checkpoint path is:
 
 ```
-$XDG_CACHE_HOME/nix-fod-swh-checker/<sha256(installable)[:16]>.json
+$XDG_CACHE_HOME/nix-archive-srcer/<sha256(installable)[:16]>.json
 ```
 
 If `XDG_CACHE_HOME` is unset, `$HOME/.cache` is used.
@@ -369,7 +369,7 @@ In addition to the per-installable checkpoint, `check` maintains a shared cache 
 The default shared cache path is:
 
 ```
-$XDG_CACHE_HOME/nix-fod-swh-checker/cache.json
+$XDG_CACHE_HOME/nix-archive-srcer/cache.json
 ```
 
 If `XDG_CACHE_HOME` is unset, `$HOME/.cache` is used.
@@ -470,9 +470,9 @@ When `nix derivation show` emits a FOD, the derivation environment usually conta
 - `env.url` — a single origin URL.
 - `env.urls` — a whitespace-separated list of mirror URLs.
 
-These URLs are stored in the `origin_urls` field of each result and in checkpoint files. They are used by `request-archiving` to ask Software Heritage to archive origins that are not yet in the archive.
+These URLs are stored in the `origin_urls` field of each result and in checkpoint files. They are used by `request` to ask Software Heritage to archive origins that are not yet in the archive.
 
-Not every FOD has a usable origin URL. Some FODs are produced by complex build steps, and their environment contains no `url`/`urls` variable. `request-archiving` simply skips such FODs.
+Not every FOD has a usable origin URL. Some FODs are produced by complex build steps, and their environment contains no `url`/`urls` variable. `request` simply skips such FODs.
 
 ---
 
@@ -494,5 +494,5 @@ Software Heritage rate-limits anonymous API requests. The client behaves as foll
 | Variable | Used by | Description |
 |----------|---------|-------------|
 | `SWH_API_TOKEN` | all subcommands that talk to SWH | Default bearer token for Software Heritage API requests. Overridden by `--swh-api-token`. |
-| `XDG_CACHE_HOME` | `check`, `generate-swh-fods`, `cook-swh-fods`, `build-swh-fods`, `request-archiving` | Base directory for the default checkpoint file and the shared cache. |
+| `XDG_CACHE_HOME` | `check`, `generate`, `cook`, `build`, `request` | Base directory for the default checkpoint file and the shared cache. |
 | `HOME` | checkpoint/cache code | Fallback for `XDG_CACHE_HOME`. |

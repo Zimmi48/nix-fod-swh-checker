@@ -1,6 +1,6 @@
-# nix-fod-swh-checker internals
+# nix-archive-srcer internals
 
-This document describes the internal algorithms, data models, and code paths of `nix-fod-swh-check`. For command-line usage, see [README.md](../README.md) and the [specification](specification.md).
+This document describes the internal algorithms, data models, and code paths of `nix-archive-src`. For command-line usage, see [README.md](../README.md) and the [specification](specification.md).
 
 ## Overview
 

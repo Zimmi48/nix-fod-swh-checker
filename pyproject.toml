@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "nix-fod-swh-checker"
+name = "nix-archive-src"
 version = "0.1.0"
-description = "List the fixed-output derivations (FODs) reachable from a Nix attribute and check whether their sources are already archived on Software Heritage"
+description = "Check whether Nix sources are archived on Software Heritage and generate alternative derivations using those archives"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -16,10 +16,10 @@ dependencies = ["requests>=2.28"]
 dev = ["pytest>=7.0"]
 
 [project.scripts]
-nix-fod-swh-check = "nix_fod_swh_checker.cli:main"
+nix-archive-src = "nix_archive_src.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/nix_fod_swh_checker"]
+packages = ["src/nix_archive_src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

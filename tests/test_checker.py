@@ -3,13 +3,13 @@ import tarfile
 
 import pytest
 
-from nix_fod_swh_checker import checker as checker_module
-from nix_fod_swh_checker import disarchive as disarchive_module
-from nix_fod_swh_checker.checker import check_fod
-from nix_fod_swh_checker.models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
-from nix_fod_swh_checker.nix import NixCommandError
-from nix_fod_swh_checker.swh import ContentLookupResult
-from nix_fod_swh_checker.swhid import compute_swhid
+from nix_archive_src import checker as checker_module
+from nix_archive_src import disarchive as disarchive_module
+from nix_archive_src.checker import check_fod
+from nix_archive_src.models import FixedOutputDerivation, SWHCheckResult, SWHLookupMethod
+from nix_archive_src.nix import NixCommandError
+from nix_archive_src.swh import ContentLookupResult
+from nix_archive_src.swhid import compute_swhid
 
 
 # Directory SWHID for a tree containing a single file ``file.txt`` with the
@@ -153,7 +153,7 @@ def test_check_fod_nar_method_unknown_swhid(monkeypatch, tmp_path):
 
 
 def test_check_fod_nar_method_uses_cache_to_skip_realisation(monkeypatch, tmp_path):
-    from nix_fod_swh_checker.cache import Cache
+    from nix_archive_src.cache import Cache
 
     output_path = "/nix/store/cached-output"
     swhid = "swh:1:dir:" + "b" * 40

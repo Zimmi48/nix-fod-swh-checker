@@ -1,5 +1,5 @@
 {
-  description = "List the fixed-output derivations (FODs) reachable from a Nix attribute and check whether their sources are already archived on Software Heritage";
+  description = "Check whether Nix sources are archived on Software Heritage and generate alternative derivations using those archives";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -11,8 +11,8 @@
       let
         pkgs = import nixpkgs { inherit system; };
 
-        nix-fod-swh-checker = pkgs.python3Packages.buildPythonApplication {
-          pname = "nix-fod-swh-checker";
+        nix-archive-src = pkgs.python3Packages.buildPythonApplication {
+          pname = "nix-archive-src";
           version = "0.1.0";
           format = "pyproject";
           src = ./.;
@@ -25,7 +25,7 @@
             pkgs.swh
             pkgs.disarchive
           ];
-          pythonImportsCheck = [ "nix_fod_swh_checker" ];
+          pythonImportsCheck = [ "nix_archive_src" ];
 
           makeWrapperArgs = [
             "--prefix" "PATH" ":" "${pkgs.swh}/bin"
@@ -33,14 +33,14 @@
           ];
 
           meta = {
-            description = "List the FODs reachable from a Nix attribute and check whether their sources are archived on Software Heritage";
-            mainProgram = "nix-fod-swh-check";
+            description = "Check whether Nix sources are archived on Software Heritage and generate alternative derivations using those archives";
+            mainProgram = "nix-archive-src";
           };
         };
       in
       {
-        packages.default = nix-fod-swh-checker;
-        packages.nix-fod-swh-checker = nix-fod-swh-checker;
+        packages.default = nix-archive-src;
+        packages.nix-archive-src = nix-archive-src;
         # Re-export the locked nixpkgs input's hello package so the
         # integration job can use a reproducible, pinned installable.
         packages.hello = nixpkgs.legacyPackages.${system}.hello;
@@ -60,13 +60,13 @@
             nar-recursive = fixtures.nar-recursive;
           };
 
-        checks.default = nix-fod-swh-checker;
+        checks.default = nix-archive-src;
 
         apps.default = {
           type = "app";
-          program = "${nix-fod-swh-checker}/bin/nix-fod-swh-check";
+          program = "${nix-archive-src}/bin/nix-archive-src";
         };
-        apps.nix-fod-swh-check = self.apps.${system}.default;
+        apps.nix-archive-src = self.apps.${system}.default;
 
         devShells.default = pkgs.mkShell {
           nativeBuildInputs = [

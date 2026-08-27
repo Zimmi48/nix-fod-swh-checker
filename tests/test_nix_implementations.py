@@ -14,7 +14,7 @@ import shutil
 
 import pytest
 
-from nix_fod_swh_checker.nix import (
+from nix_archive_src.nix import (
     iter_fixed_output_derivations,
     show_derivations_recursive,
 )

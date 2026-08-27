@@ -1,4 +1,4 @@
-"""Data models shared across the nix-fod-swh-checker package."""
+"""Data models shared across the nix-archive-src package."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
