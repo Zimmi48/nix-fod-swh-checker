@@ -296,6 +296,8 @@ If all outputs are already in the store or only uncooked vault archives remain, 
 | `-o`, `--output` `<path>` | `swh-backed-fods.nix` | Path to write the generated expression when `<input>` is an installable. Not compatible with providing a `.nix` file as `<input>`. |
 | `--checkpoint-file` `<path>` | per-installable cache file | Checkpoint to read results from when `<input>` is an installable. Not compatible with providing a `.nix` file as `<input>`. |
 | `--nix-build-arg` `<arg>` | none | Extra argument to pass to `nix build`. May be given multiple times. |
+| `--max-jobs` `<n>`, `-j` `<n>` | none | Maximum number of builds to run in parallel. Passed as `--max-jobs` to `nix build`. Use `1` to serialise downloads from Software Heritage and avoid rate-limiting. |
+| `--cores` `<n>` | none | Number of cores to use for each individual build. Passed as `--cores` to `nix build`. |
 | `--no-substitute` | false | Do not use substituters when building. Passed to both the dry run and the real build. This means that all the missing outputs must be built from the Software Heritage source rather than fetched from a Nix cache. |
 | `--swh-api-url` `<url>` | `https://archive.softwareheritage.org/api/1` | Base URL of the Software Heritage API. |
 | `--swh-api-token` `<token>` | value of `SWH_API_TOKEN` | Bearer token for authenticated requests. |

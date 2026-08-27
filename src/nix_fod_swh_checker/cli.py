@@ -203,6 +203,19 @@ def _build_parser() -> argparse.ArgumentParser:
         help="extra argument to pass to `nix build` (can be given multiple times)",
     )
     build_parser.add_argument(
+        "--max-jobs",
+        "-j",
+        type=int,
+        default=None,
+        help="maximum number of Nix builds to run in parallel (passed as `--max-jobs` to `nix build`)",
+    )
+    build_parser.add_argument(
+        "--cores",
+        type=int,
+        default=None,
+        help="number of cores to use for each Nix build (passed as `--cores` to `nix build`)",
+    )
+    build_parser.add_argument(
         "--no-substitute",
         action="store_true",
         help="do not use substituters when building",
@@ -1138,6 +1151,10 @@ def _run_build_swh_fods_command(args: argparse.Namespace) -> int:
     build_extra = list(args.nix_build_arg)
     if args.no_substitute:
         build_extra.append("--no-substitute")
+    if args.max_jobs is not None:
+        build_extra.extend(["--max-jobs", str(args.max_jobs)])
+    if args.cores is not None:
+        build_extra.extend(["--cores", str(args.cores)])
 
     try:
         build_nix_file(
