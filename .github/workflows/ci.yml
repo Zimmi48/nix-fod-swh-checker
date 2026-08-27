@@ -151,4 +151,6 @@ jobs:
           SWH_API_TOKEN: ${{ secrets.SWH_API_TOKEN }}
         run: |
           nix run .#nix-fod-swh-check -- build-swh-fods swh-backed-fods.nix \
-            --no-substitute --max-jobs 1 --cores 1
+            --no-substitute \
+            --nix-build-arg '--max-jobs 1' \
+            --nix-build-arg '--cores 1'
