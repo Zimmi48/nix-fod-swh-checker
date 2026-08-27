@@ -8,7 +8,9 @@ from nix_fod_swh_checker.models import FixedOutputDerivation
 from nix_fod_swh_checker.nix import (
     DryRunPlan,
     NixCommandError,
+    _extract_origin_urls,
     _last_store_path,
+    _normalize_env,
     build_nix_file,
     dry_run_nix_file,
     iter_fixed_output_derivations,
@@ -305,6 +307,141 @@ def test_iter_fixed_output_derivations_detects_executable_flag():
 
     (fod,) = list(iter_fixed_output_derivations(derivations))
     assert fod.executable
+
+
+def test_normalize_env_parses_json_env():
+    env = {
+        "__json": json.dumps({
+            "urls": ["https://example.com/a.tar.gz"],
+            "outputHashMode": "recursive",
+            "executable": False,
+        }),
+        "out": "/nix/store/x-out",
+    }
+    normalized = _normalize_env(env)
+    assert normalized["urls"] == ["https://example.com/a.tar.gz"]
+    assert normalized["outputHashMode"] == "recursive"
+    assert normalized["executable"] is False
+    assert normalized["out"] == "/nix/store/x-out"
+
+
+def test_normalize_env_ignores_invalid_json():
+    env = {"__json": "not json", "url": "https://example.com/x.tar.gz"}
+    normalized = _normalize_env(env)
+    assert normalized["url"] == "https://example.com/x.tar.gz"
+    assert "__json" in normalized
+
+
+def test_extract_origin_urls_accepts_list_urls():
+    assert _extract_origin_urls({"urls": ["https://a.tld/x", "https://b.tld/x"]}) == [
+        "https://a.tld/x",
+        "https://b.tld/x",
+    ]
+
+
+def test_extract_origin_urls_accepts_string_urls():
+    assert _extract_origin_urls({"urls": "https://a.tld/x https://b.tld/x"}) == [
+        "https://a.tld/x",
+        "https://b.tld/x",
+    ]
+
+
+def test_iter_fixed_output_derivations_reads_urls_from_json_env():
+    # Some derivation types (e.g. fetchzip / fetchFromGitHub) serialize the
+    # derivation environment as a JSON string in env.__json. URLs (and other
+    # env vars) must be read from there.
+    derivations = {
+        "/nix/store/json-env.drv": {
+            "name": "json-env",
+            "env": {
+                "__json": json.dumps({
+                    "urls": ["https://github.com/owner/repo/archive/v1.0.tar.gz"],
+                    "outputHashMode": "recursive",
+                    "executable": False,
+                }),
+                "out": "/nix/store/json-env-out",
+            },
+            "outputs": {
+                "out": {
+                    "path": "/nix/store/json-env-out",
+                    "hashAlgo": "r:sha256",
+                    "hash": "aa" * 32,
+                }
+            },
+        },
+    }
+
+    (fod,) = list(iter_fixed_output_derivations(derivations))
+    assert fod.method == "nar"
+    assert fod.origin_urls == ["https://github.com/owner/repo/archive/v1.0.tar.gz"]
+    assert not fod.executable
+
+
+def test_normalize_env_merges_structured_attrs():
+    # Some derivations provide environment variables via structuredAttrs
+    # instead of env.__json. These should be merged into the env.
+    env = {"out": "/nix/store/x-out"}
+    structured_attrs = {
+        "urls": ["https://example.com/a.tar.gz"],
+        "outputHashMode": "recursive",
+        "executable": False,
+    }
+    normalized = _normalize_env(env, structured_attrs)
+    assert normalized["urls"] == ["https://example.com/a.tar.gz"]
+    assert normalized["outputHashMode"] == "recursive"
+    assert normalized["executable"] is False
+    assert normalized["out"] == "/nix/store/x-out"
+
+
+def test_normalize_env_precedence():
+    # Verify that the precedence is: env < structuredAttrs < env.__json
+    env = {
+        "url": "https://env-level.com/file.tar.gz",
+        "__json": json.dumps({"url": "https://json-env.com/file.tar.gz"}),
+        "out": "/nix/store/x-out",
+    }
+    structured_attrs = {
+        "url": "https://structured-attrs.com/file.tar.gz",
+        "outputHashMode": "recursive",
+    }
+    normalized = _normalize_env(env, structured_attrs)
+    # env.__json should win for "url"
+    assert normalized["url"] == "https://json-env.com/file.tar.gz"
+    # structured_attrs should be present
+    assert normalized["outputHashMode"] == "recursive"
+    # env variables should be preserved
+    assert normalized["out"] == "/nix/store/x-out"
+
+
+def test_iter_fixed_output_derivations_reads_urls_from_structured_attrs():
+    # Issue #48: Some derivations store URLs in structuredAttrs instead of
+    # env.__json. This test verifies that we correctly extract them.
+    derivations = {
+        "/nix/store/03wjn4yy77lzalrc8k3gfpnmbic2601h-source.drv": {
+            "name": "source",
+            "env": {
+                "out": "/nix/store/1wgdrmpkzcvajkxy2gf853h28z7mzd8m-source"
+            },
+            "structuredAttrs": {
+                "urls": ["https://git.sr.ht/~rkta/w3m/archive/v0.5.6.tar.gz"],
+                "outputHashMode": "recursive",
+                "executable": False,
+            },
+            "outputs": {
+                "out": {
+                    "path": "/nix/store/1wgdrmpkzcvajkxy2gf853h28z7mzd8m-source",
+                    "hashAlgo": "sha256",
+                    "method": "nar",
+                    "hash": "549ced72f726980f1fe5127e3446233c4f021847c24518d0f9fb85d14a58fac0",
+                }
+            },
+        },
+    }
+
+    (fod,) = list(iter_fixed_output_derivations(derivations))
+    assert fod.method == "nar"
+    assert fod.origin_urls == ["https://git.sr.ht/~rkta/w3m/archive/v0.5.6.tar.gz"]
+    assert not fod.executable
 
 
 def test_show_derivations_recursive_parses_json(monkeypatch):
