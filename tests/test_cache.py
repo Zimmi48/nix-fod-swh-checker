@@ -44,7 +44,7 @@ def test_cache_miss_expires_after_ttl(tmp_path, monkeypatch):
 
     future = time.time() + DEFAULT_MISS_TTL_SECONDS + 1
     monkeypatch.setattr(
-        "nix_fod_swh_checker.cache.time.time",
+        "nix_archive_src.cache.time.time",
         lambda: future,
     )
     loaded = Cache(tmp_path / "cache.json")
@@ -68,7 +68,7 @@ def test_cache_get_removes_expired_miss(tmp_path, monkeypatch):
 
     future = time.time() + DEFAULT_MISS_TTL_SECONDS + 1
     monkeypatch.setattr(
-        "nix_fod_swh_checker.cache.time.time",
+        "nix_archive_src.cache.time.time",
         lambda: future,
     )
     assert cache.get("key") is None

@@ -69,7 +69,7 @@ def test_request_retries_on_429_then_succeeds(monkeypatch):
     monkeypatch.setattr(
         client.session, "request", lambda method, url, timeout, **kw: responses.pop(0)
     )
-    monkeypatch.setattr("nix_fod_swh_checker.swh.time.sleep", lambda *_: None)
+    monkeypatch.setattr("nix_archive_src.swh.time.sleep", lambda *_: None)
     result = client.lookup_content("sha256", "abc")
     assert result.known is True
 
@@ -78,7 +78,7 @@ def test_request_retries_using_x_ratelimit_reset(monkeypatch):
     # The real Software Heritage API does not send `Retry-After` on 429s,
     # only `X-RateLimit-Reset` (a Unix timestamp), confirmed by inspecting a
     # live response.
-    monkeypatch.setattr("nix_fod_swh_checker.swh.time.time", lambda: 1000.0)
+    monkeypatch.setattr("nix_archive_src.swh.time.time", lambda: 1000.0)
     client = SWHClient(min_delay=0, max_retries=2)
     responses = [
         FakeResponse(429, headers={"X-RateLimit-Reset": "1010"}),
@@ -88,14 +88,14 @@ def test_request_retries_using_x_ratelimit_reset(monkeypatch):
         client.session, "request", lambda method, url, timeout, **kw: responses.pop(0)
     )
     sleeps = []
-    monkeypatch.setattr("nix_fod_swh_checker.swh.time.sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr("nix_archive_src.swh.time.sleep", lambda s: sleeps.append(s))
     result = client.lookup_content("sha256", "abc")
     assert result.known is True
     assert sleeps == [10.0]
 
 
 def test_warn_if_quota_low_logs_when_remaining_is_low(monkeypatch):
-    monkeypatch.setattr("nix_fod_swh_checker.swh.time.time", lambda: 1000.0)
+    monkeypatch.setattr("nix_archive_src.swh.time.time", lambda: 1000.0)
     messages = []
     client = SWHClient(min_delay=0, on_log=messages.append)
     monkeypatch.setattr(
@@ -130,7 +130,7 @@ def test_request_raises_swherror_after_exhausting_retries(monkeypatch):
         raise requests.ConnectionError("boom")
 
     monkeypatch.setattr(client.session, "request", always_fail)
-    monkeypatch.setattr("nix_fod_swh_checker.swh.time.sleep", lambda *_: None)
+    monkeypatch.setattr("nix_archive_src.swh.time.sleep", lambda *_: None)
     with pytest.raises(SWHError):
         client.lookup_content("sha256", "abc")
 
@@ -213,7 +213,7 @@ def test_wait_for_vault_flat_polls_until_done(monkeypatch):
         FakeResponse(200, _vault_task_json(swhid, status="done", fetch_url="https://example.com")),
     ]
     monkeypatch.setattr(client.session, "request", lambda method, url, timeout, **kw: responses.pop(0))
-    monkeypatch.setattr("nix_fod_swh_checker.swh.time.sleep", lambda *_: None)
+    monkeypatch.setattr("nix_archive_src.swh.time.sleep", lambda *_: None)
     task = client.wait_for_vault_flat(swhid, poll_interval=0.01)
     assert task.status == "done"
     assert task.fetch_url == "https://example.com"
@@ -226,7 +226,7 @@ def test_wait_for_vault_flat_raises_on_failed_task(monkeypatch):
         FakeResponse(200, _vault_task_json(swhid, status="failed")),
     ]
     monkeypatch.setattr(client.session, "request", lambda method, url, timeout, **kw: responses.pop(0))
-    monkeypatch.setattr("nix_fod_swh_checker.swh.time.sleep", lambda *_: None)
+    monkeypatch.setattr("nix_archive_src.swh.time.sleep", lambda *_: None)
     with pytest.raises(VaultCookingError, match="failed"):
         client.wait_for_vault_flat(swhid)
 
@@ -238,7 +238,7 @@ def test_wait_for_vault_flat_raises_on_timeout(monkeypatch):
         FakeResponse(200, _vault_task_json(swhid, status="pending")),
     ]
     monkeypatch.setattr(client.session, "request", lambda method, url, timeout, **kw: responses.pop(0))
-    monkeypatch.setattr("nix_fod_swh_checker.swh.time.sleep", lambda *_: None)
+    monkeypatch.setattr("nix_archive_src.swh.time.sleep", lambda *_: None)
     with pytest.raises(VaultCookingError, match="timed out"):
         client.wait_for_vault_flat(swhid, timeout=0.0)
 
