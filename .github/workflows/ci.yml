@@ -152,5 +152,7 @@ jobs:
         run: |
           nix run .#nix-fod-swh-check -- build-swh-fods swh-backed-fods.nix \
             --no-substitute \
-            --nix-build-arg '--max-jobs 1' \
-            --nix-build-arg '--cores 1'
+            --nix-build-arg --max-jobs \
+            --nix-build-arg 1 \
+            --nix-build-arg --cores \
+            --nix-build-arg 1
